@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, createContext, useContext, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI, Modality } from "@google/genai";
@@ -162,12 +161,36 @@ class KeyManager {
     if (process.env.API_KEY) foundKeys.push(process.env.API_KEY);
 
     // 2. Scan VITE_GOOGLE_GENAI_TOKEN_1 to 20 (Environment Variables)
-    for (let i = 1; i <= 20; i++) {
-      // Check process.env (Standard)
-      const keyEnv = process.env[`VITE_GOOGLE_GENAI_TOKEN_${i}`] || 
-                     process.env[`NEXT_PUBLIC_GOOGLE_GENAI_TOKEN_${i}`];
-      if (keyEnv) foundKeys.push(keyEnv);
-    }
+    // NOTE: Build tools like Vite requires explicit usage of process.env.VAR_NAME to replace them at build time.
+    // Dynamic access like process.env['VAR_' + i] will result in undefined in production builds.
+    const potentialKeys = [
+      process.env.VITE_GOOGLE_GENAI_TOKEN_1,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_2,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_3,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_4,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_5,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_6,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_7,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_8,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_9,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_10,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_11,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_12,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_13,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_14,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_15,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_16,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_17,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_18,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_19,
+      process.env.VITE_GOOGLE_GENAI_TOKEN_20,
+    ];
+
+    potentialKeys.forEach(k => {
+      if (k && k.trim().length > 0) {
+        foundKeys.push(k);
+      }
+    });
 
     // Remove duplicates and empty strings
     this.keys = [...new Set(foundKeys)].filter(k => !!k && k.trim().length > 0);
