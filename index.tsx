@@ -468,7 +468,10 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [retryCount, setRetryCount] = useState(0);
   
-  const audioContextRef = useRef<AudioContext | null>(null);
+  // SEPARATE INPUT AND OUTPUT CONTEXTS
+  const inputAudioContextRef = useRef<AudioContext | null>(null);
+  const outputAudioContextRef = useRef<AudioContext | null>(null);
+
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -482,33 +485,32 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
   };
   useEffect(scrollToBottom, [messages]);
 
-  const initAudioContext = () => {
-    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: AUDIO_OUTPUT_SAMPLE_RATE,
-        latencyHint: 'interactive',
-      });
-    }
-    if (audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
-    }
-    return audioContextRef.current;
-  };
-
   const stopAllAudio = () => {
     audioQueueRef.current.forEach(source => {
       try { source.stop(); } catch(e) {}
     });
     audioQueueRef.current = [];
-    if (audioContextRef.current) {
-      nextStartTimeRef.current = audioContextRef.current.currentTime;
+    if (outputAudioContextRef.current) {
+      nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
     }
   };
 
   const connect = async () => {
     try {
       setIsConnecting(true);
-      const ctx = initAudioContext();
+      
+      // Initialize Contexts
+      inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+        sampleRate: AUDIO_INPUT_SAMPLE_RATE, // 16000
+      });
+      outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+        sampleRate: AUDIO_OUTPUT_SAMPLE_RATE, // 24000
+        latencyHint: 'interactive',
+      });
+
+      // Ensure they are running
+      await inputAudioContextRef.current.resume();
+      await outputAudioContextRef.current.resume();
       
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -573,6 +575,8 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
               sessionRef.current = s;
             });
 
+            // Use INPUT context for processing
+            const ctx = inputAudioContextRef.current!;
             const source = ctx.createMediaStreamSource(stream);
             const processor = ctx.createScriptProcessor(4096, 1, 1);
 
@@ -632,8 +636,9 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
             }
 
             const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (audioData && audioContextRef.current) {
-              const ctx = audioContextRef.current;
+            // Use OUTPUT context for playback
+            if (audioData && outputAudioContextRef.current) {
+              const ctx = outputAudioContextRef.current;
               const audioBytes = base64ToUint8Array(audioData);
               const dataInt16 = new Int16Array(audioBytes.buffer);
               const float32 = new Float32Array(dataInt16.length);
@@ -710,9 +715,15 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
       sourceRef.current.disconnect();
       sourceRef.current = null;
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close().catch(e => console.error(e));
-      audioContextRef.current = null;
+    
+    // Close both contexts
+    if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
+      inputAudioContextRef.current.close().catch(e => console.error(e));
+      inputAudioContextRef.current = null;
+    }
+    if (outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed') {
+      outputAudioContextRef.current.close().catch(e => console.error(e));
+      outputAudioContextRef.current = null;
     }
 
     stopAllAudio();
@@ -1072,7 +1083,11 @@ const LiveLabModule = () => {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
+  
+  // SEPARATE INPUT AND OUTPUT CONTEXTS
+  const inputAudioContextRef = useRef<AudioContext | null>(null);
+  const outputAudioContextRef = useRef<AudioContext | null>(null);
+
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -1101,19 +1116,6 @@ const LiveLabModule = () => {
     return score > threshold;
   };
 
-  const initAudioContext = () => {
-    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: AUDIO_OUTPUT_SAMPLE_RATE,
-        latencyHint: 'interactive', 
-      });
-    }
-    if (audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
-    }
-    return audioContextRef.current;
-  };
-
   const startLocalStream = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1138,7 +1140,21 @@ const LiveLabModule = () => {
   };
 
   const connectToGemini = async () => {
-    const ctx = initAudioContext();
+    // Initialize Contexts
+    inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+      sampleRate: AUDIO_INPUT_SAMPLE_RATE, // 16000
+    });
+    outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+      sampleRate: AUDIO_OUTPUT_SAMPLE_RATE, // 24000
+      latencyHint: 'interactive', 
+    });
+    
+    // Ensure they are running
+    await inputAudioContextRef.current.resume();
+    await outputAudioContextRef.current.resume();
+
+    const ctxInput = inputAudioContextRef.current;
+
     const stream = await startLocalStream();
     if (!stream) return;
 
@@ -1181,8 +1197,9 @@ const LiveLabModule = () => {
               sessionRef.current = s;
             });
 
-            const source = ctx.createMediaStreamSource(stream);
-            const processor = ctx.createScriptProcessor(4096, 1, 1);
+            // USE INPUT CONTEXT
+            const source = ctxInput.createMediaStreamSource(stream);
+            const processor = ctxInput.createScriptProcessor(4096, 1, 1);
             
             processor.onaudioprocess = (e) => {
               if (!micOn) return; 
@@ -1210,7 +1227,7 @@ const LiveLabModule = () => {
             };
             
             source.connect(processor);
-            processor.connect(ctx.destination);
+            processor.connect(ctxInput.destination);
             processorRef.current = processor;
             sourceRef.current = source;
 
@@ -1266,15 +1283,17 @@ const LiveLabModule = () => {
                 try { source.stop(); } catch(e) {}
               });
               audioQueueRef.current = [];
-              if (audioContextRef.current) {
-                  nextStartTimeRef.current = audioContextRef.current.currentTime;
+              if (outputAudioContextRef.current) {
+                  nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
               }
               return;
             }
 
             const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (audioData && audioContextRef.current) {
-              const ctx = audioContextRef.current;
+            
+            // USE OUTPUT CONTEXT
+            if (audioData && outputAudioContextRef.current) {
+              const ctx = outputAudioContextRef.current;
               const audioBytes = base64ToUint8Array(audioData);
               const dataInt16 = new Int16Array(audioBytes.buffer);
               const float32 = new Float32Array(dataInt16.length);
@@ -1355,10 +1374,17 @@ const LiveLabModule = () => {
       sourceRef.current.disconnect();
       sourceRef.current = null;
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close().catch(e => console.error(e));
-      audioContextRef.current = null;
+    
+    // Close both contexts
+    if (inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed') {
+      inputAudioContextRef.current.close().catch(e => console.error(e));
+      inputAudioContextRef.current = null;
     }
+    if (outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed') {
+      outputAudioContextRef.current.close().catch(e => console.error(e));
+      outputAudioContextRef.current = null;
+    }
+
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
     }
