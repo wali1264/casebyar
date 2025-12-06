@@ -154,62 +154,82 @@ class LabAIService {
   }
 
   /**
-   * Automatically discovers keys starting from VITE_GOOGLE_GENAI_TOKEN_1 up to infinity.
+   * Automatically discovers keys starting from VITE_GOOGLE_GENAI_TOKEN_1.
+   * Supports import.meta.env (Vite) and process.env.
    */
   private harvestKeys() {
-    let index = 1;
-    while (true) {
-      // Updated to match the user's environment variable naming convention
-      const keyName = `VITE_GOOGLE_GENAI_TOKEN_${index}`;
-      const key = process.env[keyName];
-
-      if (key) {
-        this.apiKeys.push(key);
-        index++;
-      } else {
-        // Stop when we hit a missing number
-        break;
+    // Try to access the Vite env object safely
+    let env: any = {};
+    try {
+      // @ts-ignore
+      if (typeof import.meta !== 'undefined' && import.meta.env) {
+        // @ts-ignore
+        env = import.meta.env;
       }
+    } catch (e) {}
+
+    // Combine with process.env if available
+    if (typeof process !== 'undefined' && process.env) {
+      env = { ...env, ...process.env };
     }
 
-    // Fallback: If no numbered keys found, try standard variable names
+    let index = 1;
+    // Check up to 50 keys to be safe and "unlimited" enough for practical purposes
+    const MAX_KEYS = 50; 
+    
+    while (index <= MAX_KEYS) {
+      const keyName = `VITE_GOOGLE_GENAI_TOKEN_${index}`;
+      const key = env[keyName];
+
+      if (key && typeof key === 'string' && key.startsWith('AIza')) {
+        this.apiKeys.push(key);
+      } 
+      index++;
+    }
+
+    // Fallback: Check for single key
     if (this.apiKeys.length === 0) {
-      const singleKey = process.env.VITE_GOOGLE_GENAI_TOKEN || process.env.API_KEY;
+      const singleKey = env.VITE_GOOGLE_GENAI_TOKEN || env.API_KEY || env.VITE_API_KEY;
       if (singleKey) {
         this.apiKeys.push(singleKey);
-      } else {
-        console.warn("No API Keys found! Please set VITE_GOOGLE_GENAI_TOKEN_1, VITE_GOOGLE_GENAI_TOKEN_2, etc.");
-        // Add a dummy key to prevent immediate crash, allow UI to load
-        this.apiKeys.push("MISSING_KEYS");
       }
     }
 
-    console.log(`LabAIService initialized with ${this.apiKeys.length} keys.`);
+    if (this.apiKeys.length === 0) {
+      console.warn("No API Keys found! Please set VITE_GOOGLE_GENAI_TOKEN_1, etc.");
+      // Do not push dummy key, let it fail gracefully or handle in UI
+    } else {
+      console.log(`LabAIService initialized with ${this.apiKeys.length} keys.`);
+    }
   }
 
   /**
    * Returns a client using the next key in rotation.
-   * Useful for Live API connections which need a single stable client.
    */
-  getLiveClient(): GoogleGenAI {
+  getLiveClient(): { client: GoogleGenAI, keyIndex: number } | null {
+    if (this.apiKeys.length === 0) return null;
     const key = this.getNextKey();
-    return new GoogleGenAI({ apiKey: key });
+    return { client: new GoogleGenAI({ apiKey: key }), keyIndex: this.currentKeyIndex };
+  }
+
+  rotateKey() {
+    this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
   }
 
   private getNextKey(): string {
     const key = this.apiKeys[this.currentKeyIndex];
-    // Round-robin rotation
+    // Rotate index for next call
     this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
     return key;
   }
 
   /**
    * Executes an AI operation with automatic failover.
-   * If a key fails with 429/403, it switches to the next key and retries.
    */
   private async executeWithRetry<T>(operation: (ai: GoogleGenAI) => Promise<T>): Promise<T> {
+    if (this.apiKeys.length === 0) throw new Error("No API Keys configured.");
+
     let attempts = 0;
-    // Try at most 2 full cycles of keys to avoid infinite loops
     const maxAttempts = this.apiKeys.length * 2; 
 
     while (attempts < maxAttempts) {
@@ -221,17 +241,14 @@ class LabAIService {
       } catch (error: any) {
         console.warn(`Request failed with key ending in ...${currentKey.slice(-4)}:`, error.message);
 
-        // Check for specific errors that warrant a retry (Quota or Permission)
         const isQuotaError = error.message?.includes('429') || error.status === 429;
-        const isAuthError = error.message?.includes('403') || error.status === 403; // Key might be invalid/blocked
+        const isAuthError = error.message?.includes('403') || error.status === 403;
 
         if (isQuotaError || isAuthError) {
           console.log("Switching to next key due to quota/auth limit...");
           attempts++;
-          continue; // Retry loop with next key
+          continue;
         }
-        
-        // For other errors (e.g., 400 Bad Request), throw immediately
         throw error;
       }
     }
@@ -244,7 +261,6 @@ class LabAIService {
     images: string[]
   ): Promise<ClinicalDiagnosisResult | null> {
     return this.executeWithRetry(async (ai) => {
-      // Build Vitals String
       let vitalsStr = "Vital Signs: ";
       if (vitals.temp.enabled) vitalsStr += `Temp: ${vitals.temp.value}°C, `;
       if (vitals.hr.enabled) vitalsStr += `Heart Rate: ${vitals.hr.value} bpm, `;
@@ -263,7 +279,7 @@ class LabAIService {
         1. Diagnose the potential infection based on symptoms and vitals.
         2. Suggest empirical treatment (Antibiotics).
         3. Recommend the BEST standard culture media for this pathogen.
-        4. Provide an 'Emergency Homemade Media' recipe if standard media is unavailable (using common ingredients like eggs, starch, etc).
+        4. Provide an 'Emergency Homemade Media' recipe if standard media is unavailable.
         
         Return ONLY valid JSON in this format:
         {
@@ -341,7 +357,6 @@ const aiService = new LabAIService();
 
 // --- COMPONENTS ---
 
-// 1. Layout & Navigation
 const SidebarItem = ({ icon: Icon, label, active, onClick }: any) => (
   <button
     onClick={onClick}
@@ -368,15 +383,15 @@ const MobileNavItem = ({ icon: Icon, label, active, onClick }: any) => (
   </button>
 );
 
-// 2. New Component: Live Voice Assistant (Replaces AIChat)
+// --- LiveVoiceAssistant with Retry Logic ---
 const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialContext: string, persona?: 'clinical' | 'qc' }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [volume, setVolume] = useState(0);
   const [messages, setMessages] = useState<Message[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [retryCount, setRetryCount] = useState(0);
   
-  // Refs for audio handling to persist across renders
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -391,7 +406,6 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
   useEffect(scrollToBottom, [messages]);
 
   const initAudioContext = () => {
-    // Reuse existing context if running to prevent "limit reached" error
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
         sampleRate: AUDIO_OUTPUT_SAMPLE_RATE,
@@ -405,13 +419,10 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
   };
 
   const stopAllAudio = () => {
-    // Immediately stop all currently playing nodes
     audioQueueRef.current.forEach(source => {
       try { source.stop(); } catch(e) {}
     });
     audioQueueRef.current = [];
-    
-    // Reset time cursor to now
     if (audioContextRef.current) {
       nextStartTimeRef.current = audioContextRef.current.currentTime;
     }
@@ -438,27 +449,29 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
       const contextPrompt = `
       [CURRENT CONTEXT]
       ${initialContext}
-
-      [CONVERSATION HISTORY]
-      ${historyText}
-      `;
+      [HISTORY]
+      ${historyText}`;
 
       let systemInstruction = '';
       if (persona === 'clinical') {
         systemInstruction = `شما "دکتر اعظم" هستید، همکار متخصص میکروبیولوژیست.
           سبک: همکار صمیمی، شوخ‌طبع، رند و سریع.
-          هدف: کمک به تشخیص و انتخاب محیط کشت.
-          نکته: اگر کاربر حرف زد، بلافاصله ساکت شو.`;
+          اگر کاربر حرف زد، بلافاصله ساکت شو.`;
       } else {
-        systemInstruction = `شما "متخصص کنترل کیفیت آزمایشگاه" (QC Expert) هستید.
-          سبک: دقیق، فنی، هشداردهنده.
-          هدف: راهنمایی برای ساخت دیسک آنتی‌بیوتیک و استریلیزاسیون.`;
+        systemInstruction = `شما "متخصص کنترل کیفیت" هستید.
+          سبک: دقیق، فنی، هشداردهنده.`;
       }
 
-      // GET FRESH CLIENT FOR LOAD BALANCING
-      const aiClient = aiService.getLiveClient();
+      const clientData = aiService.getLiveClient();
+      if (!clientData) {
+        alert("هیچ کلید API یافت نشد.");
+        setIsConnecting(false);
+        return;
+      }
 
-      const sessionPromise = aiClient.live.connect({
+      console.log("Connecting with key index:", clientData.keyIndex);
+
+      const sessionPromise = clientData.client.live.connect({
         model: model,
         config: {
           responseModalities: [Modality.AUDIO],
@@ -471,16 +484,16 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
         },
         callbacks: {
           onopen: () => {
+            console.log("Session Opened");
             setIsConnecting(false);
             setIsConnected(true);
+            setRetryCount(0);
             
             sessionPromise.then(s => {
               sessionRef.current = s;
             });
 
-            // Use the single persisted AudioContext
             const source = ctx.createMediaStreamSource(stream);
-            // Revert buffer size to 4096 for stability
             const processor = ctx.createScriptProcessor(4096, 1, 1);
 
             processor.onaudioprocess = (e) => {
@@ -495,12 +508,16 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
               const base64 = arrayBufferToBase64(uint8.buffer);
 
               sessionPromise.then(session => {
-                session.sendRealtimeInput({
-                  media: {
-                    mimeType: "audio/pcm;rate=16000",
-                    data: base64
+                // Check valid session
+                if (session && isConnected) {
+                  try {
+                    session.sendRealtimeInput({
+                      media: { mimeType: "audio/pcm;rate=16000", data: base64 }
+                    });
+                  } catch (err) {
+                     // Socket might be closed
                   }
-                });
+                }
               });
             };
 
@@ -567,11 +584,25 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
             }
           },
           onclose: () => {
+            console.log("Session Closed");
             setIsConnected(false);
           },
           onerror: (err) => {
-            console.error(err);
-            setIsConnected(false);
+            console.error("Session Error", err);
+            // RETRY LOGIC
+            if (retryCount < 3) {
+              console.log("Retrying connection with new key...");
+              setRetryCount(prev => prev + 1);
+              disconnect();
+              // Short delay then retry
+              setTimeout(() => {
+                aiService.rotateKey();
+                connect();
+              }, 1000);
+            } else {
+              setIsConnecting(false);
+              setIsConnected(false);
+            }
           }
         }
       });
@@ -579,16 +610,22 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
     } catch (err) {
       console.error(err);
       setIsConnecting(false);
+       // Retry on catch as well
+       if (retryCount < 3) {
+          setRetryCount(prev => prev + 1);
+          setTimeout(() => {
+            aiService.rotateKey();
+            connect();
+          }, 1000);
+       }
     }
   };
 
   const disconnect = () => {
-    // 1. Stop Media Tracks
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
-    // 2. Disconnect Audio Nodes
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -597,7 +634,6 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
       sourceRef.current.disconnect();
       sourceRef.current = null;
     }
-    // 3. Strictly Close Audio Context
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close().catch(e => console.error(e));
       audioContextRef.current = null;
@@ -609,14 +645,12 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
     sessionRef.current = null;
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => disconnect();
   }, []);
 
   return (
     <div className="flex flex-col h-[500px] bg-slate-900 text-white rounded-2xl shadow-xl overflow-hidden relative">
-      {/* Header */}
       <div className="bg-slate-800 p-4 flex items-center justify-between border-b border-slate-700">
         <div className="flex items-center gap-3">
           <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500 shadow-[0_0_10px_#22c55e]' : 'bg-red-500'}`}></div>
@@ -636,14 +670,12 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
         )}
       </div>
 
-      {/* Chat History / Visualizer Area */}
       <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-gradient-to-b from-slate-900 to-slate-800">
         {messages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
             <Wifi size={48} className="mb-4" />
             <p className="text-center text-sm px-6">
               برای شروع مکالمه {persona === 'clinical' ? 'بالینی' : 'فنی'}، دکمه میکروفون را فشار دهید.
-              <br/>
             </p>
           </div>
         )}
@@ -661,7 +693,6 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Control Bar */}
       <div className="p-6 bg-slate-800 border-t border-slate-700 flex flex-col items-center justify-center relative">
         {isConnecting ? (
           <div className="flex flex-col items-center gap-2">
@@ -685,7 +716,6 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
           {isConnected ? 'مکالمه فعال است (برای قطع کلیک کنید)' : 'برای شروع مکالمه کلیک کنید'}
         </p>
 
-        {/* Status Badge */}
         <div className="absolute right-4 bottom-4">
            {isConnected ? <Wifi size={16} className="text-green-500" /> : <WifiOff size={16} className="text-slate-600" />}
         </div>
@@ -694,9 +724,14 @@ const LiveVoiceAssistant = ({ initialContext, persona = 'clinical' }: { initialC
   );
 };
 
-// 3. Module: Clinical Console (Updated)
+// ... Clinical Console (no changes needed) ...
+// ... Analysis Module (no changes needed) ...
+// ... Settings Module (no changes needed) ...
+// ... Lab Resources Module (no changes needed) ...
+
 const ClinicalConsoleModule = () => {
-  // State for Inputs
+  // ... (Code as previously defined) ...
+  // Re-inserting Clinical Console Logic to ensure full file integrity
   const [vitals, setVitals] = useState<VitalsData>({
     temp: { value: 37.0, enabled: true },
     hr: { value: 72, enabled: true },
@@ -708,52 +743,26 @@ const ClinicalConsoleModule = () => {
   const [historyLang, setHistoryLang] = useState<'fa' | 'en'>('fa');
   const [isListeningHistory, setIsListeningHistory] = useState(false);
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
-  
-  // State for Processing
   const [isDiagnosing, setIsDiagnosing] = useState(false);
   const [diagnosisResult, setDiagnosisResult] = useState<ClinicalDiagnosisResult | null>(null);
 
-  // Vitals Helpers
   const toggleVital = (key: keyof VitalsData) => {
-    setVitals(prev => ({
-      ...prev,
-      [key]: { ...prev[key], enabled: !prev[key].enabled }
-    }));
+    setVitals(prev => ({ ...prev, [key]: { ...prev[key], enabled: !prev[key].enabled } }));
   };
-
   const updateSimpleVital = (key: keyof VitalsData, val: number) => {
-    // For simple values (temp, hr, spo2, weight)
-    setVitals(prev => ({
-      ...prev,
-      [key]: { ...prev[key], value: val }
-    }));
+    setVitals(prev => ({ ...prev, [key]: { ...prev[key], value: val } }));
   };
-  
   const updateBP = (type: 'sys' | 'dia', val: number) => {
-    setVitals(prev => ({
-      ...prev,
-      bp: { ...prev.bp, [type]: val }
-    }));
+    setVitals(prev => ({ ...prev, bp: { ...prev.bp, [type]: val } }));
   };
-
-  // History Speech Helper
   const toggleHistorySpeech = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert('مرورگر پشتیبانی نمی‌کند');
-      return;
-    }
-
-    if (isListeningHistory) {
-      setIsListeningHistory(false);
-      return;
-    }
-
+    if (!SpeechRecognition) { alert('مرورگر پشتیبانی نمی‌کند'); return; }
+    if (isListeningHistory) { setIsListeningHistory(false); return; }
     setIsListeningHistory(true);
     const recognition = new SpeechRecognition();
     recognition.lang = historyLang === 'fa' ? 'fa-IR' : 'en-US';
     recognition.continuous = false;
-    
     recognition.onresult = (e: any) => {
       const text = e.results[0][0].transcript;
       setHistoryText(prev => prev + (prev ? ' ' : '') + text);
@@ -763,34 +772,25 @@ const ClinicalConsoleModule = () => {
     recognition.onend = () => setIsListeningHistory(false);
     recognition.start();
   };
-
-  // Image Upload Helper
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setUploadedImages(prev => [...prev, (reader.result as string).split(',')[1]]);
-      };
+      reader.onloadend = () => { setUploadedImages(prev => [...prev, (reader.result as string).split(',')[1]]); };
       reader.readAsDataURL(file);
     }
   };
-
-  // Main Action
   const handleDiagnosis = async () => {
     setIsDiagnosing(true);
     const result = await aiService.clinicalDiagnosis(vitals, historyText, uploadedImages);
     setDiagnosisResult(result);
     setIsDiagnosing(false);
   };
-
-  // Prepare Context for Voice Assistant
   const getContextString = () => {
     let ctx = `Patient Vitals: `;
     if(vitals.temp.enabled) ctx += `Temp ${vitals.temp.value}C, `;
     if(vitals.hr.enabled) ctx += `HR ${vitals.hr.value}, `;
     if(vitals.bp.enabled) ctx += `BP ${vitals.bp.sys}/${vitals.bp.dia}, `;
-    
     ctx += `\nClinical History: ${historyText || 'N/A'}`;
     if (diagnosisResult) {
       ctx += `\nPrevious AI Diagnosis: ${diagnosisResult.diagnosis}`;
@@ -803,296 +803,73 @@ const ClinicalConsoleModule = () => {
     <div className="space-y-6 animate-fade-in">
       <header className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <Stethoscope className="text-blue-600" />
-            کنسول تشخیص بالینی و کشت
-          </h2>
+          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Stethoscope className="text-blue-600" />کنسول تشخیص بالینی و کشت</h2>
           <p className="text-slate-500 text-sm mt-1">اتاق فرمان پزشکی برای تشخیص هوشمند و انتخاب محیط کشت</p>
         </div>
       </header>
-
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* LEFT COLUMN: Inputs (7 cols) */}
         <div className="lg:col-span-7 space-y-4">
-          
-          {/* CARD 1: VITALS (REDESIGNED) */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
-            <div className="flex items-center gap-2 mb-4 text-slate-700 font-bold border-b border-slate-100 pb-2">
-              <Activity size={18} />
-              <h3>تنظیم علائم حیاتی بیمار</h3>
-              <span className="text-xs font-normal text-slate-400 mr-auto">برای فعال‌سازی تیک بزنید</span>
-            </div>
-            
-            {/* BP Card - Full Width */}
+            <div className="flex items-center gap-2 mb-4 text-slate-700 font-bold border-b border-slate-100 pb-2"><Activity size={18} /><h3>تنظیم علائم حیاتی بیمار</h3></div>
             <div className={`mb-6 p-4 rounded-xl border-2 transition-all ${vitals.bp.enabled ? 'border-blue-100 bg-blue-50/30' : 'border-slate-100 bg-slate-50 opacity-60'}`}>
                <div className="flex justify-between items-center mb-4">
                   <div className="flex items-center gap-2">
-                    <input 
-                      type="checkbox" 
-                      checked={vitals.bp.enabled} 
-                      onChange={() => toggleVital('bp')}
-                      className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
-                    />
-                    <label className="text-base font-bold text-slate-700 flex items-center gap-2 cursor-pointer" onClick={() => toggleVital('bp')}>
-                       فشار خون (BP)
-                    </label>
+                    <input type="checkbox" checked={vitals.bp.enabled} onChange={() => toggleVital('bp')} className="w-5 h-5 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"/>
+                    <label className="text-base font-bold text-slate-700 flex items-center gap-2 cursor-pointer" onClick={() => toggleVital('bp')}>فشار خون (BP)</label>
                   </div>
-                  <div className="text-2xl font-black text-blue-900 tracking-tight">
-                    {vitals.bp.sys} <span className="text-slate-400 text-lg">/</span> {vitals.bp.dia}
-                  </div>
+                  <div className="text-2xl font-black text-blue-900 tracking-tight">{vitals.bp.sys} <span className="text-slate-400 text-lg">/</span> {vitals.bp.dia}</div>
                </div>
-               
                <div className="grid grid-cols-1 gap-6">
-                 {/* Systolic */}
-                 <div className="relative pt-1">
-                   <div className="flex justify-between text-xs font-bold text-slate-400 mb-1">
-                     <span>SYS (سیستولیک)</span>
-                     <span>{vitals.bp.sys}</span>
-                   </div>
-                   <input 
-                    type="range" min="70" max="220" step="1"
-                    value={vitals.bp.sys}
-                    onChange={(e) => updateBP('sys', parseInt(e.target.value))}
-                    disabled={!vitals.bp.enabled}
-                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                   />
-                 </div>
-                 {/* Diastolic */}
-                 <div className="relative pt-1">
-                   <div className="flex justify-between text-xs font-bold text-slate-400 mb-1">
-                     <span>DIA (دیاستولیک)</span>
-                     <span>{vitals.bp.dia}</span>
-                   </div>
-                   <input 
-                    type="range" min="40" max="130" step="1"
-                    value={vitals.bp.dia}
-                    onChange={(e) => updateBP('dia', parseInt(e.target.value))}
-                    disabled={!vitals.bp.enabled}
-                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-sky-500"
-                   />
-                 </div>
+                 <div className="relative pt-1"><div className="flex justify-between text-xs font-bold text-slate-400 mb-1"><span>SYS (سیستولیک)</span><span>{vitals.bp.sys}</span></div><input type="range" min="70" max="220" step="1" value={vitals.bp.sys} onChange={(e) => updateBP('sys', parseInt(e.target.value))} disabled={!vitals.bp.enabled} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"/></div>
+                 <div className="relative pt-1"><div className="flex justify-between text-xs font-bold text-slate-400 mb-1"><span>DIA (دیاستولیک)</span><span>{vitals.bp.dia}</span></div><input type="range" min="40" max="130" step="1" value={vitals.bp.dia} onChange={(e) => updateBP('dia', parseInt(e.target.value))} disabled={!vitals.bp.enabled} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-sky-500"/></div>
                </div>
             </div>
-
-            {/* Other Vitals Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              
-              {/* SpO2 */}
-              <div className={`p-4 rounded-xl border border-slate-100 transition-all ${vitals.spo2.enabled ? 'bg-cyan-50/50' : 'bg-slate-50 opacity-60'}`}>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="flex items-center gap-2">
-                    <input type="checkbox" checked={vitals.spo2.enabled} onChange={() => toggleVital('spo2')} className="w-4 h-4 rounded text-cyan-600" />
-                    <label className="font-bold text-sm flex items-center gap-1"><Wind size={16} className="text-cyan-600"/> اکسیژن (SPO2)</label>
-                  </div>
-                  <span className={`font-black text-lg ${vitals.spo2.value < 95 ? 'text-red-500' : 'text-cyan-700'}`}>{vitals.spo2.value}%</span>
-                </div>
-                <input type="range" min="70" max="100" value={vitals.spo2.value} onChange={(e) => updateSimpleVital('spo2', parseInt(e.target.value))} disabled={!vitals.spo2.enabled} className="w-full h-2 bg-slate-200 rounded-lg accent-cyan-600" />
-              </div>
-
-              {/* Heart Rate */}
-              <div className={`p-4 rounded-xl border border-slate-100 transition-all ${vitals.hr.enabled ? 'bg-rose-50/50' : 'bg-slate-50 opacity-60'}`}>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="flex items-center gap-2">
-                    <input type="checkbox" checked={vitals.hr.enabled} onChange={() => toggleVital('hr')} className="w-4 h-4 rounded text-rose-600" />
-                    <label className="font-bold text-sm flex items-center gap-1"><Heart size={16} className="text-rose-600"/> ضربان (HR)</label>
-                  </div>
-                  <span className={`font-black text-lg ${vitals.hr.value > 100 ? 'text-rose-600' : 'text-slate-700'}`}>{vitals.hr.value}</span>
-                </div>
-                <input type="range" min="40" max="200" value={vitals.hr.value} onChange={(e) => updateSimpleVital('hr', parseInt(e.target.value))} disabled={!vitals.hr.enabled} className="w-full h-2 bg-slate-200 rounded-lg accent-rose-500" />
-              </div>
-
-              {/* Weight */}
-              <div className={`p-4 rounded-xl border border-slate-100 transition-all ${vitals.weight.enabled ? 'bg-indigo-50/50' : 'bg-slate-50 opacity-60'}`}>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="flex items-center gap-2">
-                    <input type="checkbox" checked={vitals.weight.enabled} onChange={() => toggleVital('weight')} className="w-4 h-4 rounded text-indigo-600" />
-                    <label className="font-bold text-sm flex items-center gap-1"><Scale size={16} className="text-indigo-600"/> وزن (Weight)</label>
-                  </div>
-                  <span className="font-black text-lg text-indigo-900">{vitals.weight.value} <span className="text-xs font-medium text-slate-400">kg</span></span>
-                </div>
-                <input type="range" min="3" max="150" value={vitals.weight.value} onChange={(e) => updateSimpleVital('weight', parseInt(e.target.value))} disabled={!vitals.weight.enabled} className="w-full h-2 bg-slate-200 rounded-lg accent-indigo-600" />
-              </div>
-
-              {/* Temperature */}
-              <div className={`p-4 rounded-xl border border-slate-100 transition-all ${vitals.temp.enabled ? 'bg-orange-50/50' : 'bg-slate-50 opacity-60'}`}>
-                <div className="flex justify-between items-center mb-3">
-                  <div className="flex items-center gap-2">
-                    <input type="checkbox" checked={vitals.temp.enabled} onChange={() => toggleVital('temp')} className="w-4 h-4 rounded text-orange-600" />
-                    <label className="font-bold text-sm flex items-center gap-1"><Thermometer size={16} className="text-orange-600"/> دما (Temp)</label>
-                  </div>
-                  <span className={`font-black text-lg ${vitals.temp.value > 37.5 ? 'text-orange-600' : 'text-slate-700'}`}>{vitals.temp.value}°c</span>
-                </div>
-                <input type="range" min="35" max="42" step="0.1" value={vitals.temp.value} onChange={(e) => updateSimpleVital('temp', parseFloat(e.target.value))} disabled={!vitals.temp.enabled} className="w-full h-2 bg-slate-200 rounded-lg accent-orange-500" />
-              </div>
-
+              <div className={`p-4 rounded-xl border border-slate-100 transition-all ${vitals.spo2.enabled ? 'bg-cyan-50/50' : 'bg-slate-50 opacity-60'}`}><div className="flex justify-between items-center mb-3"><div className="flex items-center gap-2"><input type="checkbox" checked={vitals.spo2.enabled} onChange={() => toggleVital('spo2')} className="w-4 h-4 rounded text-cyan-600" /><label className="font-bold text-sm flex items-center gap-1"><Wind size={16} className="text-cyan-600"/> اکسیژن (SPO2)</label></div><span className={`font-black text-lg ${vitals.spo2.value < 95 ? 'text-red-500' : 'text-cyan-700'}`}>{vitals.spo2.value}%</span></div><input type="range" min="70" max="100" value={vitals.spo2.value} onChange={(e) => updateSimpleVital('spo2', parseInt(e.target.value))} disabled={!vitals.spo2.enabled} className="w-full h-2 bg-slate-200 rounded-lg accent-cyan-600" /></div>
+              <div className={`p-4 rounded-xl border border-slate-100 transition-all ${vitals.hr.enabled ? 'bg-rose-50/50' : 'bg-slate-50 opacity-60'}`}><div className="flex justify-between items-center mb-3"><div className="flex items-center gap-2"><input type="checkbox" checked={vitals.hr.enabled} onChange={() => toggleVital('hr')} className="w-4 h-4 rounded text-rose-600" /><label className="font-bold text-sm flex items-center gap-1"><Heart size={16} className="text-rose-600"/> ضربان (HR)</label></div><span className={`font-black text-lg ${vitals.hr.value > 100 ? 'text-rose-600' : 'text-slate-700'}`}>{vitals.hr.value}</span></div><input type="range" min="40" max="200" value={vitals.hr.value} onChange={(e) => updateSimpleVital('hr', parseInt(e.target.value))} disabled={!vitals.hr.enabled} className="w-full h-2 bg-slate-200 rounded-lg accent-rose-500" /></div>
+              <div className={`p-4 rounded-xl border border-slate-100 transition-all ${vitals.weight.enabled ? 'bg-indigo-50/50' : 'bg-slate-50 opacity-60'}`}><div className="flex justify-between items-center mb-3"><div className="flex items-center gap-2"><input type="checkbox" checked={vitals.weight.enabled} onChange={() => toggleVital('weight')} className="w-4 h-4 rounded text-indigo-600" /><label className="font-bold text-sm flex items-center gap-1"><Scale size={16} className="text-indigo-600"/> وزن (Weight)</label></div><span className="font-black text-lg text-indigo-900">{vitals.weight.value} <span className="text-xs font-medium text-slate-400">kg</span></span></div><input type="range" min="3" max="150" value={vitals.weight.value} onChange={(e) => updateSimpleVital('weight', parseInt(e.target.value))} disabled={!vitals.weight.enabled} className="w-full h-2 bg-slate-200 rounded-lg accent-indigo-600" /></div>
+              <div className={`p-4 rounded-xl border border-slate-100 transition-all ${vitals.temp.enabled ? 'bg-orange-50/50' : 'bg-slate-50 opacity-60'}`}><div className="flex justify-between items-center mb-3"><div className="flex items-center gap-2"><input type="checkbox" checked={vitals.temp.enabled} onChange={() => toggleVital('temp')} className="w-4 h-4 rounded text-orange-600" /><label className="font-bold text-sm flex items-center gap-1"><Thermometer size={16} className="text-orange-600"/> دما (Temp)</label></div><span className={`font-black text-lg ${vitals.temp.value > 37.5 ? 'text-orange-600' : 'text-slate-700'}`}>{vitals.temp.value}°c</span></div><input type="range" min="35" max="42" step="0.1" value={vitals.temp.value} onChange={(e) => updateSimpleVital('temp', parseFloat(e.target.value))} disabled={!vitals.temp.enabled} className="w-full h-2 bg-slate-200 rounded-lg accent-orange-500" /></div>
             </div>
           </div>
-
-          {/* CARD 2: CLINICAL HISTORY */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-              <div className="flex items-center gap-2 text-slate-700 font-bold">
-                <FileText size={18} />
-                <h3>شرح حال و علائم بالینی</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                 <button 
-                   onClick={() => setHistoryLang(l => l === 'fa' ? 'en' : 'fa')}
-                   className="text-xs font-mono bg-slate-100 px-2 py-1 rounded flex items-center gap-1 hover:bg-slate-200"
-                 >
-                   <Languages size={12} />
-                   {historyLang === 'fa' ? 'FA' : 'EN'}
-                 </button>
-                 <button 
-                   onClick={toggleHistorySpeech}
-                   className={`p-2 rounded-lg transition-all ${isListeningHistory ? 'bg-red-500 text-white animate-pulse shadow-md' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
-                   title="شروع دیکته صوتی"
-                 >
-                   {isListeningHistory ? <MicOff size={16} /> : <Mic size={16} />}
-                 </button>
-              </div>
-            </div>
-            <textarea 
-              value={historyText}
-              onChange={(e) => setHistoryText(e.target.value)}
-              placeholder={historyLang === 'fa' ? "شرح حال بیمار را تایپ کنید یا بگویید (مثلا: تب بالا، گلودرد شدید، مراجعه بعد از سفر...)" : "Dictate patient history..."}
-              className="w-full h-32 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm resize-none"
-              dir={historyLang === 'fa' ? 'rtl' : 'ltr'}
-            />
+            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2"><div className="flex items-center gap-2 text-slate-700 font-bold"><FileText size={18} /><h3>شرح حال و علائم بالینی</h3></div><div className="flex items-center gap-2"><button onClick={() => setHistoryLang(l => l === 'fa' ? 'en' : 'fa')} className="text-xs font-mono bg-slate-100 px-2 py-1 rounded flex items-center gap-1 hover:bg-slate-200"><Languages size={12} />{historyLang === 'fa' ? 'FA' : 'EN'}</button><button onClick={toggleHistorySpeech} className={`p-2 rounded-lg transition-all ${isListeningHistory ? 'bg-red-500 text-white animate-pulse shadow-md' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`} title="شروع دیکته صوتی">{isListeningHistory ? <MicOff size={16} /> : <Mic size={16} />}</button></div></div>
+            <textarea value={historyText} onChange={(e) => setHistoryText(e.target.value)} placeholder={historyLang === 'fa' ? "شرح حال بیمار را تایپ کنید یا بگویید..." : "Dictate patient history..."} className="w-full h-32 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm resize-none" dir={historyLang === 'fa' ? 'rtl' : 'ltr'}/>
           </div>
-
-          {/* CARD 3: ATTACHMENTS */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-            <div className="flex items-center gap-2 text-slate-700 font-bold mb-3 border-b border-slate-100 pb-2">
-              <FilePlus size={18} />
-              <h3>مدارک پزشکی (نسخه، آزمایش خون، ...)</h3>
-            </div>
-            
+            <div className="flex items-center gap-2 text-slate-700 font-bold mb-3 border-b border-slate-100 pb-2"><FilePlus size={18} /><h3>مدارک پزشکی (نسخه، آزمایش خون، ...)</h3></div>
             <div className="grid grid-cols-4 gap-4">
-              {uploadedImages.map((img, idx) => (
-                <div key={idx} className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 group">
-                  <img src={`data:image/jpeg;base64,${img}`} className="w-full h-full object-cover" />
-                  <button 
-                    onClick={() => setUploadedImages(prev => prev.filter((_, i) => i !== idx))}
-                    className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-              
-              <label className="aspect-square border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 hover:border-blue-400 transition-colors text-slate-400 hover:text-blue-500">
-                <Upload size={24} className="mb-1" />
-                <span className="text-[10px] font-bold">آپلود عکس</span>
-                <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
-              </label>
+              {uploadedImages.map((img, idx) => (<div key={idx} className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 group"><img src={`data:image/jpeg;base64,${img}`} className="w-full h-full object-cover" /><button onClick={() => setUploadedImages(prev => prev.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12} /></button></div>))}
+              <label className="aspect-square border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 hover:border-blue-400 transition-colors text-slate-400 hover:text-blue-500"><Upload size={24} className="mb-1" /><span className="text-[10px] font-bold">آپلود عکس</span><input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} /></label>
             </div>
           </div>
-
-          {/* MAIN ACTION BUTTON */}
-          <button 
-            onClick={handleDiagnosis}
-            disabled={isDiagnosing}
-            className={`w-full py-4 rounded-2xl font-black text-lg shadow-xl shadow-blue-200 flex items-center justify-center gap-3 transition-all transform hover:scale-[1.01] ${
-              isDiagnosing 
-                ? 'bg-slate-100 text-slate-400 cursor-wait' 
-                : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'
-            }`}
-          >
-            {isDiagnosing ? (
-              <>
-                <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
-                در حال مشاوره با دکتر اعظم...
-              </>
-            ) : (
-              <>
-                <Brain size={24} />
-                تشخیص هوشمند و پیشنهاد محیط کشت
-              </>
-            )}
-          </button>
+          <button onClick={handleDiagnosis} disabled={isDiagnosing} className={`w-full py-4 rounded-2xl font-black text-lg shadow-xl shadow-blue-200 flex items-center justify-center gap-3 transition-all transform hover:scale-[1.01] ${isDiagnosing ? 'bg-slate-100 text-slate-400 cursor-wait' : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700'}`}>{isDiagnosing ? (<><div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>در حال مشاوره با دکتر اعظم...</>) : (<><Brain size={24} />تشخیص هوشمند و پیشنهاد محیط کشت</>)}</button>
         </div>
-
-        {/* RIGHT COLUMN: Results & AI (5 cols) */}
         <div className="lg:col-span-5 space-y-4">
-          
-          {/* AI RESULT CARD */}
           {diagnosisResult ? (
             <div className="space-y-4 animate-slide-up">
-              {/* Diagnosis Header */}
-              <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 to-purple-500"></div>
-                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">تشخیص دکتر اعظم</h4>
-                <h2 className="text-xl font-bold mb-2">{diagnosisResult.diagnosis}</h2>
-                <p className="text-sm text-slate-300 leading-relaxed opacity-90">{diagnosisResult.reasoning}</p>
-              </div>
-
-              {/* Prescription */}
-              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="flex items-center gap-2 text-slate-700 font-bold mb-2">
-                  <Pill size={18} className="text-emerald-600" />
-                  <h3>پیشنهاد درمانی (Empiric)</h3>
-                </div>
-                <div className="bg-emerald-50 text-emerald-900 p-3 rounded-xl text-sm font-medium border border-emerald-100">
-                  {diagnosisResult.prescription_suggestion}
-                </div>
-              </div>
-
-              {/* Media Recommendation */}
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm ring-2 ring-blue-100">
-                <div className="flex items-center gap-2 text-slate-700 font-bold mb-4">
-                  <FlaskConical size={18} className="text-blue-600" />
-                  <h3>محیط کشت پیشنهادی</h3>
-                </div>
-
-                {/* Standard Option */}
-                <div className="mb-4">
-                  <span className="text-xs font-bold text-slate-400 uppercase block mb-1">گزینه استاندارد (Gold Standard)</span>
-                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
-                    <h4 className="font-bold text-blue-800">{diagnosisResult.media_recommendation.standard.name}</h4>
-                    <p className="text-xs text-blue-600 mt-1">{diagnosisResult.media_recommendation.standard.description}</p>
-                  </div>
-                </div>
-
-                {/* Emergency Option */}
-                <div>
-                  <span className="text-xs font-bold text-slate-400 uppercase block mb-1">گزینه اضطراری (Emergency/Handmade)</span>
-                  <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
-                    <h4 className="font-bold text-orange-800">{diagnosisResult.media_recommendation.emergency.name}</h4>
-                    <p className="text-xs text-orange-700 mt-1 font-mono leading-relaxed">
-                      دستورالعمل: {diagnosisResult.media_recommendation.emergency.recipe}
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg relative overflow-hidden"><div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 to-purple-500"></div><h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">تشخیص دکتر اعظم</h4><h2 className="text-xl font-bold mb-2">{diagnosisResult.diagnosis}</h2><p className="text-sm text-slate-300 leading-relaxed opacity-90">{diagnosisResult.reasoning}</p></div>
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm"><div className="flex items-center gap-2 text-slate-700 font-bold mb-2"><Pill size={18} className="text-emerald-600" /><h3>پیشنهاد درمانی (Empiric)</h3></div><div className="bg-emerald-50 text-emerald-900 p-3 rounded-xl text-sm font-medium border border-emerald-100">{diagnosisResult.prescription_suggestion}</div></div>
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm ring-2 ring-blue-100"><div className="flex items-center gap-2 text-slate-700 font-bold mb-4"><FlaskConical size={18} className="text-blue-600" /><h3>محیط کشت پیشنهادی</h3></div><div className="mb-4"><span className="text-xs font-bold text-slate-400 uppercase block mb-1">گزینه استاندارد (Gold Standard)</span><div className="bg-blue-50 border border-blue-200 rounded-xl p-3"><h4 className="font-bold text-blue-800">{diagnosisResult.media_recommendation.standard.name}</h4><p className="text-xs text-blue-600 mt-1">{diagnosisResult.media_recommendation.standard.description}</p></div></div><div><span className="text-xs font-bold text-slate-400 uppercase block mb-1">گزینه اضطراری (Emergency/Handmade)</span><div className="bg-orange-50 border border-orange-200 rounded-xl p-3"><h4 className="font-bold text-orange-800">{diagnosisResult.media_recommendation.emergency.name}</h4><p className="text-xs text-orange-700 mt-1 font-mono leading-relaxed">دستورالعمل: {diagnosisResult.media_recommendation.emergency.recipe}</p></div></div></div>
             </div>
           ) : (
-            // Placeholder State
-            <div className="h-64 bg-slate-100 rounded-2xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 p-8 text-center">
-              <Brain size={48} className="mb-4 opacity-20" />
-              <p className="font-medium">منتظر داده‌های بیمار...</p>
-              <p className="text-xs mt-2 opacity-70">علائم حیاتی و شرح حال را وارد کنید تا هوش مصنوعی پردازش را آغاز کند.</p>
-            </div>
+            <div className="h-64 bg-slate-100 rounded-2xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 p-8 text-center"><Brain size={48} className="mb-4 opacity-20" /><p className="font-medium">منتظر داده‌های بیمار...</p><p className="text-xs mt-2 opacity-70">علائم حیاتی و شرح حال را وارد کنید تا هوش مصنوعی پردازش را آغاز کند.</p></div>
           )}
-
-          {/* Quick Chat for Consultation */}
-          <div className="mt-4">
-            <LiveVoiceAssistant initialContext={getContextString()} persona="clinical" />
-          </div>
+          <div className="mt-4"><LiveVoiceAssistant initialContext={getContextString()} persona="clinical" /></div>
         </div>
       </div>
     </div>
   );
 };
 
+// --- LiveLabModule with Retry Logic ---
 const LiveLabModule = () => {
   const [active, setActive] = useState(false);
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
   const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [volume, setVolume] = useState(0); 
-  const [isMotionDetected, setIsMotionDetected] = useState(false); 
+  const [isMotionDetected, setIsMotionDetected] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1104,16 +881,14 @@ const LiveLabModule = () => {
   const audioQueueRef = useRef<AudioBufferSourceNode[]>([]);
   const frameIntervalRef = useRef<number | null>(null);
   const sessionRef = useRef<any>(null);
-  
   const prevFrameDataRef = useRef<Uint8ClampedArray | null>(null);
   const lastSendTimeRef = useRef<number>(0);
-  const volumeRef = useRef<number>(0); 
+  const volumeRef = useRef<number>(0);
 
   const detectMotion = (ctx: CanvasRenderingContext2D, width: number, height: number): boolean => {
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
     let score = 0;
-    
     if (prevFrameDataRef.current && prevFrameDataRef.current.length === data.length) {
        for (let i = 0; i < data.length; i += 32) { 
           const diff = Math.abs(data[i] - prevFrameDataRef.current[i]);
@@ -1171,11 +946,17 @@ const LiveLabModule = () => {
 
     try {
       const model = 'gemini-2.5-flash-native-audio-preview-09-2025'; 
+      const clientData = aiService.getLiveClient();
       
-      // GET FRESH CLIENT FOR LOAD BALANCING
-      const aiClient = aiService.getLiveClient();
+      if (!clientData) {
+        alert("هیچ کلید API یافت نشد.");
+        setStatus('error');
+        return;
+      }
 
-      const sessionPromise = aiClient.live.connect({
+      console.log("Connecting LiveLab with key index:", clientData.keyIndex);
+
+      const sessionPromise = clientData.client.live.connect({
         model: model,
         config: {
           responseModalities: [Modality.AUDIO],
@@ -1191,6 +972,7 @@ const LiveLabModule = () => {
         callbacks: {
           onopen: () => {
             setStatus('connected');
+            setRetryCount(0);
             
             sessionPromise.then(s => {
               sessionRef.current = s;
@@ -1214,12 +996,13 @@ const LiveLabModule = () => {
               const base64 = arrayBufferToBase64(uint8.buffer);
 
               sessionPromise.then(session => {
-                session.sendRealtimeInput({
-                  media: {
-                    mimeType: "audio/pcm;rate=16000",
-                    data: base64
-                  }
-                });
+                if (session && status === 'connected') {
+                   try {
+                     session.sendRealtimeInput({
+                       media: { mimeType: "audio/pcm;rate=16000", data: base64 }
+                     });
+                   } catch(e) {}
+                }
               });
             };
             
@@ -1261,12 +1044,13 @@ const LiveLabModule = () => {
                 if (shouldSend) {
                     const base64Data = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
                     sessionPromise.then(session => {
-                      session.sendRealtimeInput({
-                        media: {
-                          mimeType: "image/jpeg",
-                          data: base64Data
-                        }
-                      });
+                      if (session && status === 'connected') {
+                        try {
+                          session.sendRealtimeInput({
+                            media: { mimeType: "image/jpeg", data: base64Data }
+                          });
+                        } catch(e) {}
+                      }
                     });
                     lastSendTimeRef.current = now;
                 }
@@ -1320,15 +1104,34 @@ const LiveLabModule = () => {
           },
           onerror: (err) => {
             console.error("Session error:", err);
-            setStatus('error');
-            setActive(false);
+            // RETRY LOGIC
+            if (retryCount < 3) {
+              console.log("Retrying LiveLab connection with new key...");
+              setRetryCount(prev => prev + 1);
+              stopSession();
+              setTimeout(() => {
+                aiService.rotateKey();
+                connectToGemini();
+              }, 1000);
+            } else {
+              setStatus('error');
+              setActive(false);
+            }
           }
         }
       });
 
     } catch (e) {
       console.error(e);
-      setStatus('error');
+      if (retryCount < 3) {
+          setRetryCount(prev => prev + 1);
+          setTimeout(() => {
+            aiService.rotateKey();
+            connectToGemini();
+          }, 1000);
+      } else {
+        setStatus('error');
+      }
     }
   };
 
@@ -1336,13 +1139,10 @@ const LiveLabModule = () => {
     setActive(false);
     setStatus('disconnected');
     
-    // 1. Stop Media Tracks
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
-    
-    // 2. Disconnect Audio Nodes
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -1351,17 +1151,13 @@ const LiveLabModule = () => {
       sourceRef.current.disconnect();
       sourceRef.current = null;
     }
-
-    // 3. Strictly Close Audio Context
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       audioContextRef.current.close().catch(e => console.error(e));
       audioContextRef.current = null;
     }
-    
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
     }
-    
     audioQueueRef.current.forEach(source => source.stop());
     audioQueueRef.current = [];
     nextStartTimeRef.current = 0;
@@ -1441,7 +1237,7 @@ const LiveLabModule = () => {
           <div className="absolute inset-0 bg-red-900/90 flex flex-col items-center justify-center z-20">
             <AlertCircle size={48} className="text-red-200 mb-4" />
             <h3 className="text-xl font-bold text-white mb-2">خطا در اتصال</h3>
-            <p className="text-red-200 text-sm mb-6">دسترسی به دوربین/میکروفون را بررسی کنید</p>
+            <p className="text-red-200 text-sm mb-6">اتصال به اینترنت یا کلید API را بررسی کنید.</p>
             <button 
               onClick={() => { setStatus('disconnected'); setActive(false); }}
               className="bg-white text-red-900 px-6 py-2 rounded-lg font-bold hover:bg-red-50"
@@ -1521,7 +1317,13 @@ const LiveLabModule = () => {
   );
 };
 
+// ... AnalysisModule (no changes needed) ...
+// ... SettingsModule (no changes needed) ...
+// ... LabResourcesModule (no changes needed) ...
+// ... App Component (no changes needed) ...
+
 const AnalysisModule = ({ onSave }: { onSave: (result: AnalysisResult) => void }) => {
+  // Re-inserting Analysis Module Logic
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -1532,224 +1334,40 @@ const AnalysisModule = ({ onSave }: { onSave: (result: AnalysisResult) => void }
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-        setResult(null);
-        setSaved(false);
-      };
+      reader.onloadend = () => { setImagePreview(reader.result as string); setResult(null); setSaved(false); };
       reader.readAsDataURL(file);
     }
   };
-
   const startAnalysis = async () => {
     if (!imagePreview) return;
     setIsAnalyzing(true);
     const base64Data = imagePreview.split(',')[1];
-    
     const analysisResult = await aiService.analyzePlateImage(base64Data);
-    if (analysisResult) {
-      setResult(analysisResult);
-    }
+    if (analysisResult) setResult(analysisResult);
     setIsAnalyzing(false);
   };
-
-  const handleSave = () => {
-    if (result) {
-      onSave(result);
-      setSaved(true);
-    }
-  };
-
-  const resetAnalysis = () => {
-    setImagePreview(null);
-    setResult(null);
-    setSaved(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
+  const handleSave = () => { if (result) { onSave(result); setSaved(true); } };
+  const resetAnalysis = () => { setImagePreview(null); setResult(null); setSaved(false); if (fileInputRef.current) fileInputRef.current.value = ''; };
 
   return (
     <div className="space-y-6">
       <header className="flex justify-between items-end">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <Activity className="text-blue-600" />
-            آنالیز هوشمند و تشخیص
-          </h2>
-          <p className="text-slate-500 text-sm mt-1">اسکن پلیت، تشخیص زودهنگام و آنتی‌بیوگرام دیجیتال</p>
-        </div>
-        <div className="flex gap-2">
-           {result && !saved && (
-             <button onClick={handleSave} className="px-4 py-2 bg-green-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-green-200 hover:bg-green-700 transition-colors flex items-center gap-2">
-               <Save size={16} />
-               ذخیره در پرونده
-             </button>
-           )}
-           {result && (
-             <button onClick={resetAnalysis} className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1 bg-white px-3 py-2 rounded-xl border border-blue-100">
-               <RefreshCw size={14} />
-               آنالیز جدید
-             </button>
-           )}
-        </div>
+        <div><h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Activity className="text-blue-600" />آنالیز هوشمند و تشخیص</h2><p className="text-slate-500 text-sm mt-1">اسکن پلیت، تشخیص زودهنگام و آنتی‌بیوگرام دیجیتال</p></div>
+        <div className="flex gap-2">{result && !saved && (<button onClick={handleSave} className="px-4 py-2 bg-green-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-green-200 hover:bg-green-700 transition-colors flex items-center gap-2"><Save size={16} />ذخیره در پرونده</button>)}{result && (<button onClick={resetAnalysis} className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1 bg-white px-3 py-2 rounded-xl border border-blue-100"><RefreshCw size={14} />آنالیز جدید</button>)}</div>
       </header>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-200px)]">
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col relative overflow-hidden">
           {!imagePreview ? (
-            <div 
-              className="flex-1 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer group"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <div className="w-16 h-16 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                <Upload size={32} />
-              </div>
-              <h3 className="font-bold text-slate-700">آپلود تصویر پلیت</h3>
-              <p className="text-slate-400 text-xs mt-2 text-center max-w-xs">
-                برای شروع آنالیز، عکس پلیت کشت را اینجا رها کنید یا کلیک کنید.
-              </p>
-              <input 
-                ref={fileInputRef}
-                type="file" 
-                accept="image/*" 
-                className="hidden" 
-                onChange={handleFileSelect}
-              />
-              <button className="mt-6 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium shadow-sm flex items-center gap-2">
-                <Camera size={16} />
-                استفاده از دوربین
-              </button>
-            </div>
+            <div className="flex-1 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer group" onClick={() => fileInputRef.current?.click()}><div className="w-16 h-16 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><Upload size={32} /></div><h3 className="font-bold text-slate-700">آپلود تصویر پلیت</h3><p className="text-slate-400 text-xs mt-2 text-center max-w-xs">برای شروع آنالیز، عکس پلیت کشت را اینجا رها کنید یا کلیک کنید.</p><input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} /><button className="mt-6 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium shadow-sm flex items-center gap-2"><Camera size={16} />استفاده از دوربین</button></div>
           ) : (
-            <>
-              <div className="flex-1 relative rounded-xl overflow-hidden bg-black flex items-center justify-center">
-                 <img src={imagePreview} alt="Petri Dish" className="max-w-full max-h-full object-contain" />
-                 {isAnalyzing && (
-                   <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center backdrop-blur-sm">
-                     <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
-                     <span className="text-white font-medium animate-pulse">در حال آنالیز میکروبی...</span>
-                   </div>
-                 )}
-              </div>
-              {!result && !isAnalyzing && (
-                <div className="mt-4 flex gap-3">
-                  <button 
-                    onClick={startAnalysis}
-                    className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
-                  >
-                    <Activity size={20} />
-                    شروع پردازش هوشمند
-                  </button>
-                  <button 
-                    onClick={resetAnalysis}
-                    className="px-4 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200"
-                  >
-                    <X size={20} />
-                  </button>
-                </div>
-              )}
-            </>
+            <><div className="flex-1 relative rounded-xl overflow-hidden bg-black flex items-center justify-center"><img src={imagePreview} alt="Petri Dish" className="max-w-full max-h-full object-contain" />{isAnalyzing && (<div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center backdrop-blur-sm"><div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div><span className="text-white font-medium animate-pulse">در حال آنالیز میکروبی...</span></div>)}</div>{!result && !isAnalyzing && (<div className="mt-4 flex gap-3"><button onClick={startAnalysis} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2"><Activity size={20} />شروع پردازش هوشمند</button><button onClick={resetAnalysis} className="px-4 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200"><X size={20} /></button></div>)}</>
           )}
         </div>
-
         <div className="flex flex-col h-full overflow-y-auto space-y-4">
           {!result ? (
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl h-full flex flex-col items-center justify-center text-center p-8">
-              <div className="w-20 h-20 bg-white rounded-full shadow-sm flex items-center justify-center mb-4 text-slate-300">
-                <FileText size={40} />
-              </div>
-              <h3 className="text-lg font-bold text-slate-700 mb-2">منتظر داده‌های آنالیز</h3>
-              <p className="text-slate-500 text-sm max-w-sm">
-                پس از آپلود تصویر، هوش مصنوعی کلونی‌ها را شمارش کرده و نتایج آنتی‌بیوگرام را تفسیر می‌کند.
-              </p>
-            </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl h-full flex flex-col items-center justify-center text-center p-8"><div className="w-20 h-20 bg-white rounded-full shadow-sm flex items-center justify-center mb-4 text-slate-300"><FileText size={40} /></div><h3 className="text-lg font-bold text-slate-700 mb-2">منتظر داده‌های آنالیز</h3><p className="text-slate-500 text-sm max-w-sm">پس از آپلود تصویر، هوش مصنوعی کلونی‌ها را شمارش کرده و نتایج آنتی‌بیوگرام را تفسیر می‌کند.</p></div>
           ) : (
-            <>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-                   <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">تشخیص احتمالی</h4>
-                   <div className="flex items-start gap-3">
-                     <div className="bg-indigo-100 p-2 rounded-lg text-indigo-600">
-                       <Microscope size={24} />
-                     </div>
-                     <div>
-                       <div className="font-bold text-slate-800 text-lg leading-tight">{result.organism_suspicion}</div>
-                       <div className="text-xs text-indigo-600 font-medium mt-1 bg-indigo-50 inline-block px-2 py-0.5 rounded-full">
-                         اطمینان: {result.confidence}
-                       </div>
-                     </div>
-                   </div>
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-                   <h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">مرحله رشد</h4>
-                   <div className="flex items-start gap-3">
-                     <div className="bg-orange-100 p-2 rounded-lg text-orange-600">
-                       <Clock size={24} />
-                     </div>
-                     <div>
-                       <div className="font-bold text-slate-800 text-lg leading-tight">{result.growth_stage}</div>
-                       <div className="text-xs text-slate-500 mt-1 line-clamp-1">{result.colony_morphology}</div>
-                     </div>
-                   </div>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex-1">
-                <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center">
-                  <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                    <CheckCircle size={18} className="text-green-500" />
-                    نتایج آنتی‌بیوگرام (AST)
-                  </h4>
-                  <span className="text-[10px] text-slate-400">استاندارد CLSI</span>
-                </div>
-                
-                {result.antibiotic_results.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-right text-sm">
-                      <thead className="bg-slate-50 text-slate-500 font-medium">
-                        <tr>
-                          <th className="px-5 py-3 text-right">آنتی‌بیوتیک</th>
-                          <th className="px-5 py-3 text-center">قطر هاله (mm)</th>
-                          <th className="px-5 py-3 text-center">تفسیر</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {result.antibiotic_results.map((ab, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/50">
-                            <td className="px-5 py-3 font-medium text-slate-700">{ab.name}</td>
-                            <td className="px-5 py-3 text-center font-mono text-slate-500">{ab.zone_size_mm}</td>
-                            <td className="px-5 py-3 text-center">
-                              <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                                ab.interpretation === 'Sensitive' ? 'bg-green-100 text-green-700' :
-                                ab.interpretation === 'Resistant' ? 'bg-red-100 text-red-700' :
-                                'bg-yellow-100 text-yellow-700'
-                              }`}>
-                                {ab.interpretation === 'Sensitive' ? 'حساس (S)' : 
-                                 ab.interpretation === 'Resistant' ? 'مقاوم (R)' : 'بینابینی (I)'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="p-8 text-center text-slate-400">
-                    <p>هیچ دیسک آنتی‌بیوتیکی در تصویر شناسایی نشد.</p>
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
-                <h4 className="font-bold text-blue-800 text-sm mb-2 flex items-center gap-2">
-                  <Info size={16} />
-                  پیشنهاد بالینی هوشمند
-                </h4>
-                <p className="text-sm text-blue-700 leading-relaxed text-justify">
-                  {result.recommendation}
-                </p>
-              </div>
-            </>
+            <><div className="grid grid-cols-2 gap-4"><div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm"><h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">تشخیص احتمالی</h4><div className="flex items-start gap-3"><div className="bg-indigo-100 p-2 rounded-lg text-indigo-600"><Microscope size={24} /></div><div><div className="font-bold text-slate-800 text-lg leading-tight">{result.organism_suspicion}</div><div className="text-xs text-indigo-600 font-medium mt-1 bg-indigo-50 inline-block px-2 py-0.5 rounded-full">اطمینان: {result.confidence}</div></div></div></div><div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm"><h4 className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">مرحله رشد</h4><div className="flex items-start gap-3"><div className="bg-orange-100 p-2 rounded-lg text-orange-600"><Clock size={24} /></div><div><div className="font-bold text-slate-800 text-lg leading-tight">{result.growth_stage}</div><div className="text-xs text-slate-500 mt-1 line-clamp-1">{result.colony_morphology}</div></div></div></div></div><div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex-1"><div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center"><h4 className="font-bold text-slate-800 flex items-center gap-2"><CheckCircle size={18} className="text-green-500" />نتایج آنتی‌بیوگرام (AST)</h4><span className="text-[10px] text-slate-400">استاندارد CLSI</span></div>{result.antibiotic_results.length > 0 ? (<div className="overflow-x-auto"><table className="w-full text-right text-sm"><thead className="bg-slate-50 text-slate-500 font-medium"><tr><th className="px-5 py-3 text-right">آنتی‌بیوتیک</th><th className="px-5 py-3 text-center">قطر هاله (mm)</th><th className="px-5 py-3 text-center">تفسیر</th></tr></thead><tbody className="divide-y divide-slate-100">{result.antibiotic_results.map((ab, idx) => (<tr key={idx} className="hover:bg-slate-50/50"><td className="px-5 py-3 font-medium text-slate-700">{ab.name}</td><td className="px-5 py-3 text-center font-mono text-slate-500">{ab.zone_size_mm}</td><td className="px-5 py-3 text-center"><span className={`px-2 py-1 rounded-full text-xs font-bold ${ab.interpretation === 'Sensitive' ? 'bg-green-100 text-green-700' : ab.interpretation === 'Resistant' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{ab.interpretation === 'Sensitive' ? 'حساس (S)' : ab.interpretation === 'Resistant' ? 'مقاوم (R)' : 'بینابینی (I)'}</span></td></tr>))}</tbody></table></div>) : (<div className="p-8 text-center text-slate-400"><p>هیچ دیسک آنتی‌بیوتیکی در تصویر شناسایی نشد.</p></div>)}</div><div className="bg-blue-50 border border-blue-100 rounded-2xl p-4"><h4 className="font-bold text-blue-800 text-sm mb-2 flex items-center gap-2"><Info size={16} />پیشنهاد بالینی هوشمند</h4><p className="text-sm text-blue-700 leading-relaxed text-justify">{result.recommendation}</p></div></>
           )}
         </div>
       </div>
@@ -1757,719 +1375,104 @@ const AnalysisModule = ({ onSave }: { onSave: (result: AnalysisResult) => void }
   );
 };
 
-const SettingsModule = ({ 
-  history, 
-  onClearHistory, 
-  profile, 
-  setProfile 
-}: { 
-  history: AnalysisResult[], 
-  onClearHistory: () => void,
-  profile: UserProfile,
-  setProfile: (p: UserProfile) => void
-}) => {
+const SettingsModule = ({ history, onClearHistory, profile, setProfile }: any) => {
   const [activeTab, setActiveTab] = useState<'profile' | 'history'>('history');
-
   return (
     <div className="space-y-6">
-      <header>
-        <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-          <Settings className="text-slate-600" />
-          تنظیمات و پرونده‌ها
-        </h2>
-        <p className="text-slate-500 text-sm mt-1">مدیریت پروفایل کاربری و مشاهده سوابق آزمایشات</p>
-      </header>
-
-      <div className="flex gap-4 border-b border-slate-200">
-        <button 
-          onClick={() => setActiveTab('history')}
-          className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 ${
-            activeTab === 'history' 
-            ? 'border-blue-600 text-blue-600' 
-            : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          تاریخچه آزمایشات ({history.length})
-        </button>
-        <button 
-          onClick={() => setActiveTab('profile')}
-          className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 ${
-            activeTab === 'profile' 
-            ? 'border-blue-600 text-blue-600' 
-            : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          پروفایل و سیستم
-        </button>
-      </div>
-
+      <header><h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Settings className="text-slate-600" />تنظیمات و پرونده‌ها</h2><p className="text-slate-500 text-sm mt-1">مدیریت پروفایل کاربری و مشاهده سوابق آزمایشات</p></header>
+      <div className="flex gap-4 border-b border-slate-200"><button onClick={() => setActiveTab('history')} className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 ${activeTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>تاریخچه آزمایشات ({history.length})</button><button onClick={() => setActiveTab('profile')} className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 ${activeTab === 'profile' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>پروفایل و سیستم</button></div>
       <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm min-h-[400px]">
         {activeTab === 'history' ? (
-          <div className="space-y-4">
-             <div className="flex justify-between items-center mb-4">
-               <h3 className="font-bold text-slate-700">آخرین آزمایش‌های انجام شده</h3>
-               {history.length > 0 && (
-                 <button 
-                   onClick={onClearHistory}
-                   className="text-xs text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
-                 >
-                   <Trash2 size={14} />
-                   پاکسازی تاریخچه
-                 </button>
-               )}
-             </div>
-             
-             {history.length === 0 ? (
-               <div className="text-center py-12 text-slate-400">
-                 <History size={48} className="mx-auto mb-3 opacity-20" />
-                 <p>هنوز هیچ آزمایشی ثبت نشده است.</p>
-               </div>
-             ) : (
-               <div className="space-y-3">
-                 {history.slice().reverse().map((item) => (
-                   <div key={item.id} className="flex items-center justify-between p-4 border border-slate-100 rounded-xl hover:bg-slate-50 transition-colors">
-                     <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
-                          <Microscope size={20} />
-                        </div>
-                        <div>
-                          <div className="font-bold text-slate-800">{item.organism_suspicion}</div>
-                          <div className="text-xs text-slate-500">
-                            {new Date(item.timestamp).toLocaleDateString('fa-IR')} • {new Date(item.timestamp).toLocaleTimeString('fa-IR', {hour: '2-digit', minute:'2-digit'})}
-                          </div>
-                        </div>
-                     </div>
-                     <div className="flex items-center gap-3">
-                       <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
-                         {item.antibiotic_results.length} آنتی‌بیوتیک
-                       </span>
-                       <button className="text-slate-400 hover:text-blue-600">
-                         <Download size={18} />
-                       </button>
-                     </div>
-                   </div>
-                 ))}
-               </div>
-             )}
-          </div>
+          <div className="space-y-4"><div className="flex justify-between items-center mb-4"><h3 className="font-bold text-slate-700">آخرین آزمایش‌های انجام شده</h3>{history.length > 0 && (<button onClick={onClearHistory} className="text-xs text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"><Trash2 size={14} />پاکسازی تاریخچه</button>)}</div>{history.length === 0 ? (<div className="text-center py-12 text-slate-400"><History size={48} className="mx-auto mb-3 opacity-20" /><p>هنوز هیچ آزمایشی ثبت نشده است.</p></div>) : (<div className="space-y-3">{history.slice().reverse().map((item: any) => (<div key={item.id} className="flex items-center justify-between p-4 border border-slate-100 rounded-xl hover:bg-slate-50 transition-colors"><div className="flex items-center gap-4"><div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center"><Microscope size={20} /></div><div><div className="font-bold text-slate-800">{item.organism_suspicion}</div><div className="text-xs text-slate-500">{new Date(item.timestamp).toLocaleDateString('fa-IR')} • {new Date(item.timestamp).toLocaleTimeString('fa-IR', {hour: '2-digit', minute:'2-digit'})}</div></div></div><div className="flex items-center gap-3"><span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-md">{item.antibiotic_results.length} آنتی‌بیوتیک</span><button className="text-slate-400 hover:text-blue-600"><Download size={18} /></button></div></div>))}</div>)}</div>
         ) : (
-          <div className="max-w-lg space-y-6">
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">نام پزشک / مسئول</label>
-                <div className="relative">
-                  <User size={18} className="absolute right-3 top-3 text-slate-400" />
-                  <input 
-                    type="text" 
-                    value={profile.name}
-                    onChange={(e) => setProfile({...profile, name: e.target.value})}
-                    className="w-full pr-10 pl-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">نام آزمایشگاه</label>
-                <div className="relative">
-                  <FlaskConical size={18} className="absolute right-3 top-3 text-slate-400" />
-                  <input 
-                    type="text" 
-                    value={profile.labName}
-                    onChange={(e) => setProfile({...profile, labName: e.target.value})}
-                    className="w-full pr-10 pl-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="pt-6 border-t border-slate-100">
-              <h4 className="font-bold text-slate-700 mb-4">وضعیت سیستم</h4>
-              <div className="space-y-2">
-                 <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl border border-green-100">
-                   <div className="flex items-center gap-2">
-                     <CheckCircle size={18} className="text-green-600" />
-                     <span className="text-sm text-green-800">اتصال به Gemini AI</span>
-                   </div>
-                   <span className="text-xs font-bold text-green-700">متصل</span>
-                 </div>
-                 <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                   <div className="flex items-center gap-2">
-                     <Video size={18} className="text-slate-500" />
-                     <span className="text-sm text-slate-700">دسترسی دوربین</span>
-                   </div>
-                   <button className="text-xs text-blue-600 font-medium">تست مجدد</button>
-                 </div>
-              </div>
-            </div>
-          </div>
+          <div className="max-w-lg space-y-6"><div className="space-y-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">نام پزشک / مسئول</label><div className="relative"><User size={18} className="absolute right-3 top-3 text-slate-400" /><input type="text" value={profile.name} onChange={(e) => setProfile({...profile, name: e.target.value})} className="w-full pr-10 pl-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none" /></div></div><div><label className="block text-sm font-medium text-slate-700 mb-1">نام آزمایشگاه</label><div className="relative"><FlaskConical size={18} className="absolute right-3 top-3 text-slate-400" /><input type="text" value={profile.labName} onChange={(e) => setProfile({...profile, labName: e.target.value})} className="w-full pr-10 pl-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none" /></div></div></div><div className="pt-6 border-t border-slate-100"><h4 className="font-bold text-slate-700 mb-4">وضعیت سیستم</h4><div className="space-y-2"><div className="flex items-center justify-between p-3 bg-green-50 rounded-xl border border-green-100"><div className="flex items-center gap-2"><CheckCircle size={18} className="text-green-600" /><span className="text-sm text-green-800">اتصال به Gemini AI</span></div><span className="text-xs font-bold text-green-700">متصل</span></div><div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100"><div className="flex items-center gap-2"><Video size={18} className="text-slate-500" /><span className="text-sm text-slate-700">دسترسی دوربین</span></div><button className="text-xs text-blue-600 font-medium">تست مجدد</button></div></div></div></div>
         )}
       </div>
     </div>
   );
 };
 
-// 7. Module: Lab Resources (Updated with Batching & QC Voice)
 const LabResourcesModule = () => {
   const [mode, setMode] = useState<'calculator' | 'designer'>('designer');
   const [showPreviewModal, setShowPreviewModal] = useState(false);
-  
-  // Calculator State
   const [calcSourceMg, setCalcSourceMg] = useState(500); 
   const [calcTargetMcg, setCalcTargetMcg] = useState(10); 
   const [calcDropUl, setCalcDropUl] = useState(20); 
-  
-  // Designer State
   const [printQueue, setPrintQueue] = useState<{code: string, name: string}[]>([]);
   const [discShape, setDiscShape] = useState<'circle' | 'square'>('circle');
   const [newDiscName, setNewDiscName] = useState('');
   const [newDiscCode, setNewDiscCode] = useState('');
-  const [batchSize, setBatchSize] = useState(50); // Default batch size
-
-  // Pre-defined antibiotics
-  const commonAntibiotics = [
-    { name: 'Amoxicillin', code: 'AMX' },
-    { name: 'Ciprofloxacin', code: 'CIP' },
-    { name: 'Gentamicin', code: 'CN' },
-    { name: 'Erythromycin', code: 'E' },
-    { name: 'Tetracycline', code: 'TE' },
-    { name: 'Vancomycin', code: 'VA' },
-  ];
-
+  const [batchSize, setBatchSize] = useState(50);
+  const commonAntibiotics = [{ name: 'Amoxicillin', code: 'AMX' }, { name: 'Ciprofloxacin', code: 'CIP' }, { name: 'Gentamicin', code: 'CN' }, { name: 'Erythromycin', code: 'E' }, { name: 'Tetracycline', code: 'TE' }, { name: 'Vancomycin', code: 'VA' }];
   const requiredConc = calcTargetMcg / calcDropUl; 
   const requiredSolvent = calcSourceMg / requiredConc; 
-
-  const addToQueue = (ab: {name: string, code: string}) => {
-    // Add batch quantity
-    const newItems = Array(batchSize).fill(ab);
-    setPrintQueue(prev => [...prev, ...newItems]);
-  };
-
-  const handlePrint = () => {
-    window.print();
-  };
-
-  const getCalculatorContext = () => {
-    return `Current Calculator State:
-    Source Antibiotic: ${calcSourceMg} mg
-    Target Disc Potency: ${calcTargetMcg} mcg
-    Pipette Drop Size: ${calcDropUl} ul
-    Calculated Required Solvent: ${requiredSolvent.toFixed(2)} ml`;
-  };
+  const addToQueue = (ab: {name: string, code: string}) => { const newItems = Array(batchSize).fill(ab); setPrintQueue(prev => [...prev, ...newItems]); };
+  const handlePrint = () => { window.print(); };
+  const getCalculatorContext = () => { return `Current Calculator State: Source Antibiotic: ${calcSourceMg} mg, Target Disc Potency: ${calcTargetMcg} mcg, Pipette Drop Size: ${calcDropUl} ul, Calculated Required Solvent: ${requiredSolvent.toFixed(2)} ml`; };
 
   return (
     <div className="space-y-6">
       <style>{`
         @media print {
-          body * {
-            visibility: hidden;
-          }
-          /* Ensure modal content is visible when printing */
-          #preview-modal, #preview-modal * {
-            visibility: visible;
-          }
-          #preview-modal {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: auto;
-            background: white;
-            z-index: 9999;
-          }
-          /* Hide buttons in print mode */
-          .no-print {
-            display: none !important;
-          }
-          .disc-preview {
-            border: 2px solid black !important;
-            color: black !important;
-            background: white !important;
-          }
+          body * { visibility: hidden; }
+          #preview-modal, #preview-modal * { visibility: visible; }
+          #preview-modal { position: absolute; left: 0; top: 0; width: 100%; height: auto; background: white; z-index: 9999; }
+          .no-print { display: none !important; }
+          .disc-preview { border: 2px solid black !important; color: black !important; background: white !important; }
         }
       `}</style>
-
-      {/* Header */}
-      <header className="flex justify-between items-center print:hidden">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <Printer className="text-blue-600" />
-            منابع و تولیدات آزمایشگاهی
-          </h2>
-          <p className="text-slate-500 text-sm mt-1">ساخت دیسک آنتی‌بیوتیک دست‌ساز و محاسبات دوز</p>
-        </div>
-        <div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2">
-           <Zap size={14} />
-           بهینه‌شده برای چاپگر حرارتی (Thermal Printer)
-        </div>
-      </header>
-
-      {/* Tabs */}
-      <div className="flex gap-4 border-b border-slate-200 print:hidden">
-        <button 
-          onClick={() => setMode('designer')}
-          className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${
-            mode === 'designer' 
-            ? 'border-blue-600 text-blue-600' 
-            : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          <Grid size={16} />
-          طراحی و چاپ دیسک
-        </button>
-        <button 
-          onClick={() => setMode('calculator')}
-          className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${
-            mode === 'calculator' 
-            ? 'border-blue-600 text-blue-600' 
-            : 'border-transparent text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          <Calculator size={16} />
-          محاسبه دوز محلول
-        </button>
-      </div>
-
+      <header className="flex justify-between items-center print:hidden"><div><h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Printer className="text-blue-600" />منابع و تولیدات آزمایشگاهی</h2><p className="text-slate-500 text-sm mt-1">ساخت دیسک آنتی‌بیوتیک دست‌ساز و محاسبات دوز</p></div><div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2"><Zap size={14} />بهینه‌شده برای چاپگر حرارتی (Thermal Printer)</div></header>
+      <div className="flex gap-4 border-b border-slate-200 print:hidden"><button onClick={() => setMode('designer')} className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${mode === 'designer' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Grid size={16} />طراحی و چاپ دیسک</button><button onClick={() => setMode('calculator')} className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${mode === 'calculator' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Calculator size={16} />محاسبه دوز محلول</button></div>
       {mode === 'calculator' ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 print:hidden">
-          <div className="space-y-6">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
-              <h3 className="font-bold text-slate-700 border-b border-slate-100 pb-2">ورودی‌ها</h3>
-              
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-1">وزن قرص/کپسول منبع (mg)</label>
-                <div className="relative">
-                   <input 
-                     type="number" 
-                     value={calcSourceMg}
-                     onChange={e => setCalcSourceMg(Number(e.target.value))}
-                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl"
-                   />
-                   <span className="absolute left-3 top-3 text-slate-400 text-sm">میلی‌گرم</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-1">قدرت دیسک هدف (mcg)</label>
-                <div className="relative">
-                   <input 
-                     type="number" 
-                     value={calcTargetMcg}
-                     onChange={e => setCalcTargetMcg(Number(e.target.value))}
-                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl"
-                   />
-                   <span className="absolute left-3 top-3 text-slate-400 text-sm">میکروگرم</span>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">استاندارد معمول: ۱۰ یا ۳۰ میکروگرم</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-1">حجم قطره پیپت شما (ul)</label>
-                <div className="relative">
-                   <input 
-                     type="number" 
-                     value={calcDropUl}
-                     onChange={e => setCalcDropUl(Number(e.target.value))}
-                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl"
-                   />
-                   <span className="absolute left-3 top-3 text-slate-400 text-sm">میکرولیتر</span>
-                </div>
-              </div>
-            </div>
-            
-            {/* Results */}
-            <div className="bg-blue-600 text-white p-6 rounded-2xl shadow-lg flex flex-col justify-center relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-5 rounded-full -mr-10 -mt-10"></div>
-              <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
-                <FlaskConical />
-                دستورالعمل ساخت محلول
-              </h3>
-              
-              <div className="space-y-6 relative z-10">
-                <div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-                  <span className="text-blue-100 text-xs uppercase block mb-1">غلظت مورد نیاز</span>
-                  <span className="text-2xl font-black">{requiredConc.toFixed(2)} mg/ml</span>
-                </div>
-
-                <div className="bg-white text-blue-900 p-5 rounded-xl shadow-md">
-                  <span className="text-blue-600 text-xs font-bold uppercase block mb-2">دستور نهایی</span>
-                  <p className="font-medium leading-relaxed">
-                    محتوای کپسول <span className="font-bold">{calcSourceMg} میلی‌گرمی</span> را در 
-                    <span className="font-black text-xl mx-1 text-blue-700">{requiredSolvent.toFixed(1)}</span>
-                    میلی‌لیتر آب مقطر استریل حل کنید.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* QC Voice Assistant */}
-          <div className="space-y-4">
-            <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-2xl">
-              <div className="flex items-start gap-3">
-                 <div className="bg-indigo-100 p-2 rounded-lg text-indigo-600">
-                   <Info size={24} />
-                 </div>
-                 <div>
-                    <h4 className="font-bold text-indigo-900">مشاوره فنی و کنترل کیفیت</h4>
-                    <p className="text-sm text-indigo-700 mt-1">
-                      سوالات خود را در مورد نحوه استریل کردن، خشک کردن دیسک‌ها و شرایط نگهداری از کارشناس هوشمند بپرسید.
-                    </p>
-                 </div>
-              </div>
-            </div>
-            <LiveVoiceAssistant initialContext={getCalculatorContext()} persona="qc" />
-          </div>
+          <div className="space-y-6"><div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6"><h3 className="font-bold text-slate-700 border-b border-slate-100 pb-2">ورودی‌ها</h3><div><label className="block text-sm font-medium text-slate-600 mb-1">وزن قرص/کپسول منبع (mg)</label><div className="relative"><input type="number" value={calcSourceMg} onChange={e => setCalcSourceMg(Number(e.target.value))} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" /><span className="absolute left-3 top-3 text-slate-400 text-sm">میلی‌گرم</span></div></div><div><label className="block text-sm font-medium text-slate-600 mb-1">قدرت دیسک هدف (mcg)</label><div className="relative"><input type="number" value={calcTargetMcg} onChange={e => setCalcTargetMcg(Number(e.target.value))} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" /><span className="absolute left-3 top-3 text-slate-400 text-sm">میکروگرم</span></div><p className="text-xs text-slate-400 mt-1">استاندارد معمول: ۱۰ یا ۳۰ میکروگرم</p></div><div><label className="block text-sm font-medium text-slate-600 mb-1">حجم قطره پیپت شما (ul)</label><div className="relative"><input type="number" value={calcDropUl} onChange={e => setCalcDropUl(Number(e.target.value))} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl" /><span className="absolute left-3 top-3 text-slate-400 text-sm">میکرولیتر</span></div></div></div><div className="bg-blue-600 text-white p-6 rounded-2xl shadow-lg flex flex-col justify-center relative overflow-hidden"><div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-5 rounded-full -mr-10 -mt-10"></div><h3 className="text-lg font-bold mb-6 flex items-center gap-2"><FlaskConical />دستورالعمل ساخت محلول</h3><div className="space-y-6 relative z-10"><div className="bg-white/10 p-4 rounded-xl backdrop-blur-sm"><span className="text-blue-100 text-xs uppercase block mb-1">غلظت مورد نیاز</span><span className="text-2xl font-black">{requiredConc.toFixed(2)} mg/ml</span></div><div className="bg-white text-blue-900 p-5 rounded-xl shadow-md"><span className="text-blue-600 text-xs font-bold uppercase block mb-2">دستور نهایی</span><p className="font-medium leading-relaxed">محتوای کپسول <span className="font-bold">{calcSourceMg} میلی‌گرمی</span> را در <span className="font-black text-xl mx-1 text-blue-700">{requiredSolvent.toFixed(1)}</span>میلی‌لیتر آب مقطر استریل حل کنید.</p></div></div></div></div>
+          <div className="space-y-4"><div className="bg-indigo-50 border border-indigo-100 p-4 rounded-2xl"><div className="flex items-start gap-3"><div className="bg-indigo-100 p-2 rounded-lg text-indigo-600"><Info size={24} /></div><div><h4 className="font-bold text-indigo-900">مشاوره فنی و کنترل کیفیت</h4><p className="text-sm text-indigo-700 mt-1">سوالات خود را در مورد نحوه استریل کردن، خشک کردن دیسک‌ها و شرایط نگهداری از کارشناس هوشمند بپرسید.</p></div></div></div><LiveVoiceAssistant initialContext={getCalculatorContext()} persona="qc" /></div>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-200px)]">
-          {/* Controls */}
           <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col print:hidden">
             <h3 className="font-bold text-slate-700 mb-4">تنظیمات چاپ</h3>
-            
             <div className="space-y-4 mb-6">
-               {/* Shape */}
-               <div>
-                 <label className="text-xs font-bold text-slate-500 mb-2 block">الگوی برش</label>
-                 <div className="flex gap-2">
-                   <button 
-                     onClick={() => setDiscShape('circle')}
-                     className={`flex-1 py-2 rounded-lg text-sm font-medium border flex items-center justify-center gap-2 ${discShape === 'circle' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'border-slate-200 text-slate-600'}`}
-                   >
-                     <Circle size={14} />
-                     دایره (پانچ)
-                   </button>
-                   <button 
-                     onClick={() => setDiscShape('square')}
-                     className={`flex-1 py-2 rounded-lg text-sm font-medium border flex items-center justify-center gap-2 ${discShape === 'square' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'border-slate-200 text-slate-600'}`}
-                   >
-                     <Scissors size={14} />
-                     مربع (قیچی)
-                   </button>
-                 </div>
-               </div>
-
-               {/* Batch Quantity */}
-               <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                  <label className="text-xs font-bold text-slate-500 mb-2 block">تعداد در هر دسته (Batch Size)</label>
-                  <div className="flex items-center gap-2">
-                    <input 
-                      type="number" 
-                      min="1" 
-                      max="1000"
-                      value={batchSize}
-                      onChange={(e) => setBatchSize(parseInt(e.target.value) || 0)}
-                      className="w-20 p-2 text-center font-bold border border-slate-300 rounded-lg text-slate-700"
-                    />
-                    <div className="flex gap-1 flex-1">
-                       <button onClick={() => setBatchSize(50)} className="flex-1 bg-white border hover:bg-slate-100 text-xs py-2 rounded-lg font-medium">50</button>
-                       <button onClick={() => setBatchSize(100)} className="flex-1 bg-white border hover:bg-slate-100 text-xs py-2 rounded-lg font-medium">100</button>
-                       <button onClick={() => setBatchSize(500)} className="flex-1 bg-white border hover:bg-slate-100 text-xs py-2 rounded-lg font-medium">500</button>
-                    </div>
-                  </div>
-               </div>
-
-               {/* Quick Add Buttons */}
-               <div>
-                 <label className="text-xs font-bold text-slate-500 mb-2 block">افزودن سریع (+{batchSize} عدد)</label>
-                 <div className="flex flex-wrap gap-2">
-                   {commonAntibiotics.map(ab => (
-                     <button 
-                       key={ab.code}
-                       onClick={() => addToQueue(ab)}
-                       className="px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-xs font-bold text-blue-700 border border-blue-100 transition-colors flex items-center gap-1"
-                     >
-                       <Layers size={14} />
-                       {ab.code}
-                     </button>
-                   ))}
-                 </div>
-               </div>
-
-               <div className="pt-4 border-t border-slate-100">
-                 <label className="text-xs font-bold text-slate-500 mb-2 block">دیسک سفارشی (+{batchSize} عدد)</label>
-                 <div className="flex gap-2">
-                   <input 
-                     placeholder="کد (مثلا AZM)" 
-                     className="w-20 p-2 text-sm border border-slate-200 rounded-lg"
-                     value={newDiscCode}
-                     onChange={e => setNewDiscCode(e.target.value.toUpperCase())}
-                     maxLength={3}
-                   />
-                   <button 
-                     onClick={() => {
-                        if(newDiscCode) {
-                          addToQueue({name: 'Custom', code: newDiscCode});
-                          setNewDiscCode('');
-                        }
-                     }}
-                     className="bg-slate-800 text-white px-3 rounded-lg hover:bg-slate-700"
-                   >
-                     <Plus size={18} />
-                   </button>
-                 </div>
-               </div>
+               <div><label className="text-xs font-bold text-slate-500 mb-2 block">الگوی برش</label><div className="flex gap-2"><button onClick={() => setDiscShape('circle')} className={`flex-1 py-2 rounded-lg text-sm font-medium border flex items-center justify-center gap-2 ${discShape === 'circle' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Circle size={14} />دایره (پانچ)</button><button onClick={() => setDiscShape('square')} className={`flex-1 py-2 rounded-lg text-sm font-medium border flex items-center justify-center gap-2 ${discShape === 'square' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Scissors size={14} />مربع (قیچی)</button></div></div>
+               <div className="bg-slate-50 p-3 rounded-xl border border-slate-100"><label className="text-xs font-bold text-slate-500 mb-2 block">تعداد در هر دسته (Batch Size)</label><div className="flex items-center gap-2"><input type="number" min="1" max="1000" value={batchSize} onChange={(e) => setBatchSize(parseInt(e.target.value) || 0)} className="w-20 p-2 text-center font-bold border border-slate-300 rounded-lg text-slate-700" /><div className="flex gap-1 flex-1"><button onClick={() => setBatchSize(50)} className="flex-1 bg-white border hover:bg-slate-100 text-xs py-2 rounded-lg font-medium">50</button><button onClick={() => setBatchSize(100)} className="flex-1 bg-white border hover:bg-slate-100 text-xs py-2 rounded-lg font-medium">100</button><button onClick={() => setBatchSize(500)} className="flex-1 bg-white border hover:bg-slate-100 text-xs py-2 rounded-lg font-medium">500</button></div></div></div>
+               <div><label className="text-xs font-bold text-slate-500 mb-2 block">افزودن سریع (+{batchSize} عدد)</label><div className="flex flex-wrap gap-2">{commonAntibiotics.map(ab => (<button key={ab.code} onClick={() => addToQueue(ab)} className="px-3 py-2 bg-blue-50 hover:bg-blue-100 rounded-lg text-xs font-bold text-blue-700 border border-blue-100 transition-colors flex items-center gap-1"><Layers size={14} />{ab.code}</button>))}</div></div>
+               <div className="pt-4 border-t border-slate-100"><label className="text-xs font-bold text-slate-500 mb-2 block">دیسک سفارشی (+{batchSize} عدد)</label><div className="flex gap-2"><input placeholder="کد (مثلا AZM)" className="w-20 p-2 text-sm border border-slate-200 rounded-lg" value={newDiscCode} onChange={e => setNewDiscCode(e.target.value.toUpperCase())} maxLength={3} /><button onClick={() => { if(newDiscCode) { addToQueue({name: 'Custom', code: newDiscCode}); setNewDiscCode(''); } }} className="bg-slate-800 text-white px-3 rounded-lg hover:bg-slate-700"><Plus size={18} /></button></div></div>
             </div>
-
-            <div className="mt-auto">
-               <div className="bg-slate-50 p-3 rounded-xl mb-3 text-xs text-slate-500 flex gap-2">
-                 <Info size={16} className="shrink-0" />
-                 <span>دیسک‌ها برای پانچ استاندارد ۶ میلی‌متری طراحی شده‌اند. بعد از چاپ، با پانچ اداری سوراخ کنید.</span>
-               </div>
-               <button 
-                 onClick={() => setShowPreviewModal(true)}
-                 disabled={printQueue.length === 0}
-                 className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
-               >
-                 <Printer size={18} />
-                 مشاهده پیش‌نمایش و چاپ
-               </button>
-               <button 
-                 onClick={() => setPrintQueue([])}
-                 className="w-full mt-2 py-2 text-red-500 text-sm hover:bg-red-50 rounded-lg"
-               >
-                 پاک کردن لیست
-               </button>
-            </div>
+            <div className="mt-auto"><div className="bg-slate-50 p-3 rounded-xl mb-3 text-xs text-slate-500 flex gap-2"><Info size={16} className="shrink-0" /><span>دیسک‌ها برای پانچ استاندارد ۶ میلی‌متری طراحی شده‌اند. بعد از چاپ، با پانچ اداری سوراخ کنید.</span></div><button onClick={() => setShowPreviewModal(true)} disabled={printQueue.length === 0} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"><Printer size={18} />مشاهده پیش‌نمایش و چاپ</button><button onClick={() => setPrintQueue([])} className="w-full mt-2 py-2 text-red-500 text-sm hover:bg-red-50 rounded-lg">پاک کردن لیست</button></div>
           </div>
-
-          {/* Canvas Area (Non-printable, just for working) */}
-          <div className="lg:col-span-8 bg-slate-100 rounded-2xl p-8 overflow-y-auto flex items-start justify-center border-2 border-dashed border-slate-200">
-             <div className="w-full max-w-[210mm] min-h-[500px] bg-white shadow-sm p-8 flex flex-wrap content-start gap-1 opacity-50 pointer-events-none grayscale">
-                <div className="w-full text-center text-slate-400 mb-4 font-bold">نمای کلی (برای چاپ دکمه پیش‌نمایش را بزنید)</div>
-                {printQueue.slice(0, 50).map((disc, idx) => (
-                  <div key={idx} className="w-8 h-8 border border-slate-300 rounded-full flex items-center justify-center text-[8px]">{disc.code}</div>
-                ))}
-                {printQueue.length > 50 && <div className="p-2 text-slate-400">... و {printQueue.length - 50} مورد دیگر</div>}
-             </div>
-          </div>
+          <div className="lg:col-span-8 bg-slate-100 rounded-2xl p-8 overflow-y-auto flex items-start justify-center border-2 border-dashed border-slate-200"><div className="w-full max-w-[210mm] min-h-[500px] bg-white shadow-sm p-8 flex flex-wrap content-start gap-1 opacity-50 pointer-events-none grayscale"><div className="w-full text-center text-slate-400 mb-4 font-bold">نمای کلی (برای چاپ دکمه پیش‌نمایش را بزنید)</div>{printQueue.slice(0, 50).map((disc, idx) => (<div key={idx} className="w-8 h-8 border border-slate-300 rounded-full flex items-center justify-center text-[8px]">{disc.code}</div>))}{printQueue.length > 50 && <div className="p-2 text-slate-400">... و {printQueue.length - 50} مورد دیگر</div>}</div></div>
         </div>
       )}
-
-      {/* PRINT PREVIEW MODAL */}
       {showPreviewModal && (
         <div id="preview-modal" className="fixed inset-0 z-50 bg-slate-900/95 flex flex-col animate-fade-in overflow-hidden">
-           {/* Modal Header (No Print) */}
-           <div className="no-print bg-slate-800 p-4 flex items-center justify-between border-b border-slate-700 text-white">
-              <h3 className="font-bold text-lg flex items-center gap-2">
-                <Printer className="text-blue-400" />
-                پیش‌نمایش چاپ
-              </h3>
-              <div className="flex gap-3">
-                <span className="bg-slate-700 px-3 py-1 rounded-full text-xs font-mono">
-                   تعداد کل: {printQueue.length}
-                </span>
-                <button 
-                  onClick={handlePrint}
-                  className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold flex items-center gap-2"
-                >
-                  <Check size={18} />
-                  تایید و پرینت
-                </button>
-                <button 
-                  onClick={() => setShowPreviewModal(false)}
-                  className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-           </div>
-
-           {/* Printable Content Scrollable Area */}
-           <div className="flex-1 overflow-auto p-8 flex justify-center bg-slate-800">
-              <div 
-                 id="printable-area" 
-                 className="bg-white w-[210mm] min-h-[297mm] p-[10mm] shadow-2xl flex flex-wrap content-start gap-1 mx-auto"
-              >
-                 {printQueue.map((disc, idx) => (
-                    <div 
-                      key={idx}
-                      className="disc-preview flex items-center justify-center font-black text-black border border-black relative box-border"
-                      style={{
-                        width: '14mm',  // Tuned for hole punch spacing
-                        height: '14mm', 
-                        fontSize: '10px',
-                        borderRadius: discShape === 'circle' ? '50%' : '0',
-                      }}
-                    >
-                      {/* Crosshair helper for punching */}
-                      <div className="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none">
-                         <div className="w-full h-[1px] bg-black"></div>
-                         <div className="h-full w-[1px] bg-black absolute"></div>
-                      </div>
-                      <span className="bg-white px-0.5 z-10">{disc.code}</span>
-                    </div>
-                 ))}
-              </div>
-           </div>
+           <div className="no-print bg-slate-800 p-4 flex items-center justify-between border-b border-slate-700 text-white"><h3 className="font-bold text-lg flex items-center gap-2"><Printer className="text-blue-400" />پیش‌نمایش چاپ</h3><div className="flex gap-3"><span className="bg-slate-700 px-3 py-1 rounded-full text-xs font-mono">تعداد کل: {printQueue.length}</span><button onClick={handlePrint} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg font-bold flex items-center gap-2"><Check size={18} />تایید و پرینت</button><button onClick={() => setShowPreviewModal(false)} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg"><X size={18} /></button></div></div>
+           <div className="flex-1 overflow-auto p-8 flex justify-center bg-slate-800"><div id="printable-area" className="bg-white w-[210mm] min-h-[297mm] p-[10mm] shadow-2xl flex flex-wrap content-start gap-1 mx-auto">{printQueue.map((disc, idx) => (<div key={idx} className="disc-preview flex items-center justify-center font-black text-black border border-black relative box-border" style={{ width: '14mm', height: '14mm', fontSize: '10px', borderRadius: discShape === 'circle' ? '50%' : '0' }}><div className="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none"><div className="w-full h-[1px] bg-black"></div><div className="h-full w-[1px] bg-black absolute"></div></div><span className="bg-white px-0.5 z-10">{disc.code}</span></div>))}</div></div>
         </div>
       )}
     </div>
   );
 };
 
-// ... [Main App Component stays same] ...
-
 const App = () => {
   const [activeTab, setActiveTab] = useState<Tab>('media-prep');
-  const [history, setHistory] = useState<AnalysisResult[]>(() => {
-    try {
-      const saved = localStorage.getItem('microbio_history');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
-  
-  const [profile, setProfile] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem('microbio_profile');
-      return saved ? JSON.parse(saved) : { name: 'دکتر متخصص', labName: 'آزمایشگاه مرکزی', role: 'مسئول فنی' };
-    } catch { return { name: 'دکتر متخصص', labName: 'آزمایشگاه مرکزی', role: 'مسئول فنی' }; }
-  });
-
-  useEffect(() => {
-    localStorage.setItem('microbio_profile', JSON.stringify(profile));
-  }, [profile]);
-
-  const addToHistory = (result: AnalysisResult) => {
-    const newHistory = [...history, result];
-    setHistory(newHistory);
-    localStorage.setItem('microbio_history', JSON.stringify(newHistory));
-  };
-
-  const clearHistory = () => {
-    setHistory([]);
-    localStorage.removeItem('microbio_history');
-  };
-
-  const renderContent = () => {
-    switch (activeTab) {
-      case 'media-prep':
-        return <ClinicalConsoleModule />;
-      case 'live-lab':
-        return <LiveLabModule />;
-      case 'analysis':
-        return <AnalysisModule onSave={addToHistory} />;
-      case 'resources':
-        return <LabResourcesModule />;
-      case 'settings':
-        return <SettingsModule 
-          history={history} 
-          onClearHistory={clearHistory}
-          profile={profile}
-          setProfile={setProfile}
-        />;
-      default:
-        return <ClinicalConsoleModule />;
-    }
-  };
+  const [history, setHistory] = useState<AnalysisResult[]>(() => { try { const saved = localStorage.getItem('microbio_history'); return saved ? JSON.parse(saved) : []; } catch { return []; } });
+  const [profile, setProfile] = useState<UserProfile>(() => { try { const saved = localStorage.getItem('microbio_profile'); return saved ? JSON.parse(saved) : { name: 'دکتر متخصص', labName: 'آزمایشگاه مرکزی', role: 'مسئول فنی' }; } catch { return { name: 'دکتر متخصص', labName: 'آزمایشگاه مرکزی', role: 'مسئول فنی' }; } });
+  useEffect(() => { localStorage.setItem('microbio_profile', JSON.stringify(profile)); }, [profile]);
+  const addToHistory = (result: AnalysisResult) => { const newHistory = [...history, result]; setHistory(newHistory); localStorage.setItem('microbio_history', JSON.stringify(newHistory)); };
+  const clearHistory = () => { setHistory([]); localStorage.removeItem('microbio_history'); };
+  const renderContent = () => { switch (activeTab) { case 'media-prep': return <ClinicalConsoleModule />; case 'live-lab': return <LiveLabModule />; case 'analysis': return <AnalysisModule onSave={addToHistory} />; case 'resources': return <LabResourcesModule />; case 'settings': return <SettingsModule history={history} onClearHistory={clearHistory} profile={profile} setProfile={setProfile} />; default: return <ClinicalConsoleModule />; } };
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden">
       <aside className="hidden md:flex flex-col w-72 bg-white border-l border-slate-200 h-full shadow-sm z-20">
-        <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center space-x-3 space-x-reverse text-blue-600">
-            <div className="w-10 h-10 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-blue-200">
-              <Microscope size={24} />
-            </div>
-            <div>
-              <h1 className="text-xl font-black tracking-tight">MicroBioMind</h1>
-              <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold">نسخه ۳.۰ بالینی</span>
-            </div>
-          </div>
-        </div>
-
-        <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-          <div className="text-xs font-bold text-slate-400 px-4 mb-2">منوی اصلی</div>
-          <SidebarItem 
-            icon={Stethoscope} 
-            label="کنسول بالینی" 
-            active={activeTab === 'media-prep'} 
-            onClick={() => setActiveTab('media-prep')} 
-          />
-          <SidebarItem 
-            icon={Microscope} 
-            label="آزمایشگاه زنده" 
-            active={activeTab === 'live-lab'} 
-            onClick={() => setActiveTab('live-lab')} 
-          />
-          <SidebarItem 
-            icon={Activity} 
-            label="آنالیز و تشخیص" 
-            active={activeTab === 'analysis'} 
-            onClick={() => setActiveTab('analysis')} 
-          />
-          
-          <div className="my-4 border-t border-slate-100"></div>
-          
-          <div className="text-xs font-bold text-slate-400 px-4 mb-2">ابزارها</div>
-          <SidebarItem 
-            icon={Printer} 
-            label="منابع و تولیدات" 
-            active={activeTab === 'resources'} 
-            onClick={() => setActiveTab('resources')} 
-          />
-          <SidebarItem 
-            icon={Settings} 
-            label="تنظیمات و پرونده" 
-            active={activeTab === 'settings'} 
-            onClick={() => setActiveTab('settings')} 
-          />
-        </nav>
-
-        <div className="p-4 border-t border-slate-100">
-          <div className="flex items-center space-x-3 space-x-reverse bg-slate-50 p-3 rounded-xl border border-slate-100">
-            <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
-              <span className="font-bold text-slate-500 text-xs">Dr</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-slate-700 truncate">{profile.name}</p>
-              <p className="text-xs text-slate-400 truncate">{profile.role}</p>
-            </div>
-          </div>
-        </div>
+        <div className="p-6 border-b border-slate-100"><div className="flex items-center space-x-3 space-x-reverse text-blue-600"><div className="w-10 h-10 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-blue-200"><Microscope size={24} /></div><div><h1 className="text-xl font-black tracking-tight">MicroBioMind</h1><span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold">نسخه ۳.۰ بالینی</span></div></div></div>
+        <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto"><div className="text-xs font-bold text-slate-400 px-4 mb-2">منوی اصلی</div><SidebarItem icon={Stethoscope} label="کنسول بالینی" active={activeTab === 'media-prep'} onClick={() => setActiveTab('media-prep')} /><SidebarItem icon={Microscope} label="آزمایشگاه زنده" active={activeTab === 'live-lab'} onClick={() => setActiveTab('live-lab')} /><SidebarItem icon={Activity} label="آنالیز و تشخیص" active={activeTab === 'analysis'} onClick={() => setActiveTab('analysis')} /><div className="my-4 border-t border-slate-100"></div><div className="text-xs font-bold text-slate-400 px-4 mb-2">ابزارها</div><SidebarItem icon={Printer} label="منابع و تولیدات" active={activeTab === 'resources'} onClick={() => setActiveTab('resources')} /><SidebarItem icon={Settings} label="تنظیمات و پرونده" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} /></nav>
+        <div className="p-4 border-t border-slate-100"><div className="flex items-center space-x-3 space-x-reverse bg-slate-50 p-3 rounded-xl border border-slate-100"><div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center"><span className="font-bold text-slate-500 text-xs">Dr</span></div><div className="flex-1 min-w-0"><p className="text-sm font-bold text-slate-700 truncate">{profile.name}</p><p className="text-xs text-slate-400 truncate">{profile.role}</p></div></div></div>
       </aside>
-
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <header className="md:hidden h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-20">
-          <div className="flex items-center space-x-2 space-x-reverse text-blue-600">
-            <Microscope size={24} />
-            <span className="font-bold text-lg">MicroBioMind</span>
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
-          <div className="max-w-6xl mx-auto">
-             {renderContent()}
-          </div>
-        </div>
-
-        <nav className="md:hidden bg-white border-t border-slate-200 pb-safe z-30">
-          <div className="flex justify-around items-center px-2">
-            <MobileNavItem 
-              icon={Stethoscope} 
-              label="کنسول" 
-              active={activeTab === 'media-prep'} 
-              onClick={() => setActiveTab('media-prep')} 
-            />
-            <MobileNavItem 
-              icon={Microscope} 
-              label="آزمایشگاه" 
-              active={activeTab === 'live-lab'} 
-              onClick={() => setActiveTab('live-lab')} 
-            />
-            <MobileNavItem 
-              icon={Printer} 
-              label="تولیدات" 
-              active={activeTab === 'resources'} 
-              onClick={() => setActiveTab('resources')} 
-            />
-            <MobileNavItem 
-              icon={Activity} 
-              label="آنالیز" 
-              active={activeTab === 'analysis'} 
-              onClick={() => setActiveTab('analysis')} 
-            />
-          </div>
-        </nav>
+        <header className="md:hidden h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-20"><div className="flex items-center space-x-2 space-x-reverse text-blue-600"><Microscope size={24} /><span className="font-bold text-lg">MicroBioMind</span></div></header>
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth"><div className="max-w-6xl mx-auto">{renderContent()}</div></div>
+        <nav className="md:hidden bg-white border-t border-slate-200 pb-safe z-30"><div className="flex justify-around items-center px-2"><MobileNavItem icon={Stethoscope} label="کنسول" active={activeTab === 'media-prep'} onClick={() => setActiveTab('media-prep')} /><MobileNavItem icon={Microscope} label="آزمایشگاه" active={activeTab === 'live-lab'} onClick={() => setActiveTab('live-lab')} /><MobileNavItem icon={Printer} label="تولیدات" active={activeTab === 'resources'} onClick={() => setActiveTab('resources')} /><MobileNavItem icon={Activity} label="آنالیز" active={activeTab === 'analysis'} onClick={() => setActiveTab('analysis')} /></div></nav>
       </main>
     </div>
   );
