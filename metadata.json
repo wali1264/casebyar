@@ -1,6 +1,5 @@
-
 {
-  "name": "کاسب یار - دستیار هوشمند کسب و کار",
+  "name": "khoroj",
   "description": "سیستم جامع و هوشمند مدیریت فروشگاه، انبارداری و حسابداری با نام تجاری کاسب یار.",
   "requestFramePermissions": [
     "microphone",

@@ -14,11 +14,12 @@ interface AppContextType extends AppState {
     showToast: (message: string) => void;
     isLoading: boolean;
     isLoggingOut: boolean;
+    isShopActive: boolean;
     
     // Auth
     login: (identifier: string, password: string, type: 'admin' | 'staff') => Promise<{ success: boolean; message: string; pending?: boolean; locked?: boolean }>;
     signup: (email: string, password: string) => Promise<{ success: boolean; message: string }>;
-    logout: () => Promise<{ success: boolean; message: string }>;
+    logout: (type: 'full' | 'switch') => Promise<{ success: boolean; message: string }>;
     hasPermission: (permission: Permission) => boolean;
     
     // Backup & Restore
@@ -128,6 +129,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [state, setState] = useState<AppState>(getDefaultState());
     const [isLoading, setIsLoading] = useState(true);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
+    const [isShopActive, setIsShopActive] = useState(() => localStorage.getItem('kasebyar_shop_active') === 'true');
     const [toastMessage, setToastMessage] = useState('');
     const [autoBackupEnabled, setAutoBackupEnabled] = useState(() => localStorage.getItem('kasebyar_auto_backup') === 'true');
 
@@ -162,9 +164,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                         restoredUser = { id: session.user.id, username: session.user.email || 'Admin', roleId: 'admin-role' };
                         
                         if (!profile.current_device_id) {
-                            const success = await api.updateProfile(session.user.id, { current_device_id: deviceId });
-                            if (!success) { isAuth = false; await logout(); }
+                            await api.updateProfile(session.user.id, { current_device_id: deviceId });
                         }
+                        // Admin login always activates the shop
+                        localStorage.setItem('kasebyar_shop_active', 'true');
+                        setIsShopActive(true);
                     }
                 } else if (!navigator.onLine && localStorage.getItem('kasebyar_offline_auth') === 'true') {
                     isAuth = true;
@@ -176,8 +180,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     try {
                         const parsedStaff = JSON.parse(localStaff) as User;
                         const dbUser = users.find(u => u.id === parsedStaff.id);
-                        if (dbUser) { isAuth = true; restoredUser = dbUser; }
-                        else { localStorage.removeItem('kasebyar_staff_user'); }
+                        // Only allow staff restore if shop is active
+                        if (dbUser && localStorage.getItem('kasebyar_shop_active') === 'true') { 
+                            isAuth = true; 
+                            restoredUser = dbUser; 
+                        } else { 
+                            localStorage.removeItem('kasebyar_staff_user'); 
+                        }
                     } catch(e) { localStorage.removeItem('kasebyar_staff_user'); }
                 }
             }
@@ -211,30 +220,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         fetchData();
     }, [fetchData]);
 
-    // --- Automatic Backup Logic ---
-    useEffect(() => {
-        if (!state.isAuthenticated || !autoBackupEnabled) return;
-
-        const checkBackup = async () => {
-            const lastBackup = localStorage.getItem('kasebyar_last_backup_time');
-            const now = Date.now();
-            const oneDay = 24 * 60 * 60 * 1000;
-
-            if (!lastBackup || (now - parseInt(lastBackup)) >= oneDay) {
-                console.log("Starting automatic 24h backup...");
-                exportData();
-                if (navigator.onLine && state.currentUser && state.currentUser.roleId === 'admin-role') {
-                    await cloudBackup();
-                }
-                localStorage.setItem('kasebyar_last_backup_time', now.toString());
-                showToast("✅ پشتیبان‌گیری خودکار ۲۴ ساعته انجام شد.");
-            }
-        };
-
-        const timer = setTimeout(checkBackup, 5000);
-        return () => clearTimeout(timer);
-    }, [state.isAuthenticated, autoBackupEnabled, state.currentUser]);
-
     const login = async (identifier: string, password: string, type: 'admin' | 'staff'): Promise<{ success: boolean; message: string; pending?: boolean; locked?: boolean }> => {
         if (type === 'admin') {
             try {
@@ -245,12 +230,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 if (!profile.is_approved) return { success: false, message: 'حساب در انتظار تایید است.', pending: true };
                 const deviceId = getDeviceId();
                 if (profile.current_device_id && profile.current_device_id !== deviceId) return { success: false, message: 'این حساب در دستگاه دیگری فعال است.', locked: true };
+                
                 if (!profile.current_device_id) await api.updateProfile(data.user.id, { current_device_id: deviceId });
+                
                 localStorage.setItem('kasebyar_offline_auth', 'true');
+                localStorage.setItem('kasebyar_shop_active', 'true');
+                setIsShopActive(true);
+                
                 await fetchData();
-                return { success: true, message: '✅ ورود موفق' };
+                return { success: true, message: '✅ ورود موفق و بازگشایی فروشگاه' };
             } catch (e) { return { success: false, message: '❌ خطا در اتصال.' }; }
         } else {
+            if (localStorage.getItem('kasebyar_shop_active') !== 'true') {
+                return { success: false, message: '❌ فروشگاه غیرفعال است. مدیر کل باید ابتدا وارد شود.' };
+            }
             const user = await api.verifyStaffCredentials(identifier, password);
             if (user) {
                 localStorage.setItem('kasebyar_staff_user', JSON.stringify(user));
@@ -260,7 +253,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     };
 
-    const signup = async (email: string, password: string): Promise<{ success: boolean; message: string }> => {
+    const signup = async (email: string, password: string) => {
         try {
             const { error } = await supabase.auth.signUp({ email, password });
             if (error) return { success: false, message: error.message };
@@ -268,38 +261,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } catch (e) { return { success: false, message: '❌ خطا در ثبت‌نام.' }; }
     };
 
-    const logout = async (): Promise<{ success: boolean; message: string }> => {
+    const logout = async (type: 'full' | 'switch'): Promise<{ success: boolean; message: string }> => {
         setIsLoggingOut(true);
-        const localStaff = localStorage.getItem('kasebyar_staff_user');
-        if (localStaff) {
+        const isStaff = !!localStorage.getItem('kasebyar_staff_user');
+
+        if (isStaff) {
             localStorage.removeItem('kasebyar_staff_user');
             setTimeout(() => {
                 setState(prev => ({ ...prev, isAuthenticated: false, currentUser: null }));
                 setIsLoggingOut(false);
             }, 800);
-            return { success: true, message: 'خروج موفق' };
+            return { success: true, message: 'خروج از حساب انجام شد.' };
         }
 
-        if (!navigator.onLine) {
-            setIsLoggingOut(false);
-            showToast("⚠️ خروج مدیر نیاز به اینترنت دارد.");
-            return { success: false, message: 'عدم اتصال' };
-        }
-
-        try {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) await api.updateProfile(user.id, { current_device_id: null });
-            await supabase.auth.signOut();
-            localStorage.removeItem('kasebyar_offline_auth');
-            setTimeout(() => {
-                setState(prev => ({ ...prev, isAuthenticated: false, currentUser: null }));
+        // Manager Logout
+        if (type === 'full') {
+            if (!navigator.onLine) {
                 setIsLoggingOut(false);
-            }, 1000);
-            return { success: true, message: 'خروج موفق' };
-        } catch (e) {
-            setIsLoggingOut(false);
-            return { success: false, message: 'خطا' };
+                showToast("⚠️ خروج کامل و آزادسازی دستگاه نیاز به اینترنت دارد.");
+                return { success: false, message: 'عدم اتصال' };
+            }
+            try {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) await api.updateProfile(user.id, { current_device_id: null });
+                await supabase.auth.signOut();
+                localStorage.removeItem('kasebyar_offline_auth');
+                localStorage.setItem('kasebyar_shop_active', 'false');
+                setIsShopActive(false);
+            } catch (e) { console.error(e); }
+        } else {
+            // Switch User: Just clear current user but keep device bound and shop active
+            setState(prev => ({ ...prev, isAuthenticated: false, currentUser: null }));
+            // We don't sign out from Supabase auth session to keep the "offline_auth" capability for later
         }
+
+        setTimeout(() => {
+            setState(prev => ({ ...prev, isAuthenticated: false, currentUser: null }));
+            setIsLoggingOut(false);
+        }, 1000);
+        return { success: true, message: 'خروج موفق' };
     };
 
     const hasPermission = (permission: Permission): boolean => {
@@ -621,7 +621,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (isLoading) return <div className="flex items-center justify-center h-screen text-xl font-bold text-blue-600">در حال دریافت اطلاعات...</div>;
 
     return <AppContext.Provider value={{
-        ...state, showToast, isLoading, isLoggingOut, login, signup, logout, hasPermission, addUser, updateUser, deleteUser, addRole, updateRole, deleteRole, exportData, importData,
+        ...state, showToast, isLoading, isLoggingOut, isShopActive, login, signup, logout, hasPermission, addUser, updateUser, deleteUser, addRole, updateRole, deleteRole, exportData, importData,
         cloudBackup, cloudRestore, autoBackupEnabled, setAutoBackupEnabled: handleSetAutoBackup,
         addProduct, updateProduct, deleteProduct, addToCart, updateCartItemQuantity, updateCartItemFinalPrice, removeFromCart, completeSale,
         beginEditSale, cancelEditSale, addSaleReturn, addPurchaseInvoice, beginEditPurchase, cancelEditPurchase, updatePurchaseInvoice, addPurchaseReturn,

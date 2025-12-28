@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { DashboardIcon, InventoryIcon, POSIcon, PurchaseIcon, AccountingIcon, SettingsIcon, LogoutIcon, ReportsIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon } from './icons';
+import React, { useState, useEffect, useRef } from 'react';
+import { DashboardIcon, InventoryIcon, POSIcon, PurchaseIcon, AccountingIcon, SettingsIcon, LogoutIcon, ReportsIcon, ChevronDoubleLeftIcon, ChevronDoubleRightIcon, KeyIcon, UserGroupIcon, XIcon } from './icons';
 import { useAppContext } from '../AppContext';
 
 interface SidebarProps {
@@ -16,14 +16,25 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, storeName,
   const { logout, currentUser, showToast, isLoggingOut } = useAppContext();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [showLogoutMenu, setShowLogoutMenu] = useState(false);
+  const logoutMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleStatus = () => setIsOnline(navigator.onLine);
     window.addEventListener('online', handleStatus);
     window.addEventListener('offline', handleStatus);
+    
+    const handleClickOutside = (e: MouseEvent) => {
+        if (logoutMenuRef.current && !logoutMenuRef.current.contains(e.target as Node)) {
+            setShowLogoutMenu(false);
+        }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    
     return () => {
         window.removeEventListener('online', handleStatus);
         window.removeEventListener('offline', handleStatus);
+        document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
   
@@ -41,22 +52,23 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, storeName,
   
   const handleItemClick = (view: string) => {
     setActiveView(view);
-    if(isMobileOpen) {
-      setIsMobileOpen(false);
-    }
+    if(isMobileOpen) setIsMobileOpen(false);
   };
 
-  const handleLogout = async () => {
+  const handleLogoutAction = async (type: 'full' | 'switch') => {
     if (isLoggingOut) return;
-    if (!isOnline && currentUser?.roleId === 'admin-role') {
-        showToast("⚠️ خروج مدیر کل فقط در زمان اتصال به اینترنت مجاز است.");
+    if (type === 'full' && !isOnline) {
+        showToast("⚠️ خروج کامل مدیر نیاز به اینترنت دارد.");
         return;
     }
-    const res = await logout();
+    const res = await logout(type);
     if (res.success) {
-        showToast("✅ خروج ایمن انجام شد.");
+        showToast(type === 'full' ? "✅ خروج کامل و قفل فروشگاه انجام شد." : "✅ نشست شما بسته شد. فروشگاه باز است.");
     }
+    setShowLogoutMenu(false);
   };
+
+  const isManager = currentUser?.roleId === 'admin-role';
 
   return (
     <>
@@ -99,25 +111,55 @@ const Sidebar: React.FC<SidebarProps> = ({ activeView, setActiveView, storeName,
           ))}
         </nav>
         
-        <div className="mt-auto pt-4 border-t border-gray-200/60">
+        <div className="mt-auto pt-4 border-t border-gray-200/60 relative" ref={logoutMenuRef}>
+          {/* Status Display */}
           {!isCollapsed && (
               <div className="p-2 mb-2 text-center bg-slate-100/70 rounded-lg flex flex-col items-center">
                   <p className="font-bold text-slate-800 truncate w-full">{currentUser?.username}</p>
-                  <span className={`text-[10px] mt-1 px-2 py-0.5 rounded-full ${isOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                      {isOnline ? 'آنلاین' : 'آفلاین'}
-                  </span>
+                  <div className="flex gap-1 mt-1">
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full ${isOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                          {isOnline ? 'آنلاین' : 'آفلاین'}
+                      </span>
+                      <span className="text-[9px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                          فروشگاه باز
+                      </span>
+                  </div>
               </div>
           )}
+
+          {/* Logout Button/Menu Trigger */}
           <button
-              onClick={handleLogout}
+              onClick={() => isManager ? setShowLogoutMenu(!showLogoutMenu) : handleLogoutAction('switch')}
               disabled={isLoggingOut}
-              className={`w-full flex items-center rounded-xl p-3 text-lg transition-all ${isLoggingOut ? 'bg-slate-100 text-slate-400' : (isOnline || currentUser?.roleId !== 'admin-role' ? 'text-slate-700 hover:bg-red-100/70 hover:text-red-600' : 'text-slate-300 cursor-not-allowed')} ${isCollapsed ? 'justify-center' : 'space-x-2 space-x-reverse'}`}
+              className={`w-full flex items-center rounded-xl p-3 text-lg transition-all ${isLoggingOut ? 'bg-slate-100 text-slate-400' : 'text-slate-700 hover:bg-red-50 hover:text-red-600'} ${isCollapsed ? 'justify-center' : 'space-x-2 space-x-reverse'}`}
             >
               {isLoggingOut ? (
                   <svg className="animate-spin h-6 w-6 text-blue-600" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
               ) : <LogoutIcon />}
-              {!isCollapsed && <span className="font-semibold whitespace-nowrap">{isLoggingOut ? 'در حال خروج ایمن...' : 'خروج'}</span>}
+              {!isCollapsed && <span className="font-semibold whitespace-nowrap">{isLoggingOut ? 'خروج ایمن...' : 'خروج'}</span>}
           </button>
+
+          {/* Manager Logout Submenu */}
+          {showLogoutMenu && isManager && !isCollapsed && (
+              <div className="absolute bottom-full right-0 mb-2 w-full bg-white rounded-2xl shadow-2xl border border-gray-200 p-2 z-[60] modal-animate">
+                  <div className="text-xs font-bold text-slate-400 p-2 border-b mb-1">نوع خروج مدیر:</div>
+                  <button onClick={() => handleLogoutAction('switch')} className="w-full text-right p-3 rounded-lg hover:bg-blue-50 text-blue-700 flex items-center gap-2 mb-1">
+                      <UserGroupIcon className="w-5 h-5" />
+                      <div>
+                          <p className="font-bold">تعویض کاربر</p>
+                          <p className="text-[10px] opacity-70">فروشگاه باز می‌ماند (برای کارکنان)</p>
+                      </div>
+                  </button>
+                  <button onClick={() => handleLogoutAction('full')} className="w-full text-right p-3 rounded-lg hover:bg-red-50 text-red-700 flex items-center gap-2">
+                      <KeyIcon className="w-5 h-5" />
+                      <div>
+                          <p className="font-bold">خروج کامل و قفل</p>
+                          <p className="text-[10px] opacity-70">دستگاه آزاد و فروشگاه بسته می‌شود</p>
+                      </div>
+                  </button>
+              </div>
+          )}
+
           <button
               onClick={() => setIsCollapsed(prev => !prev)}
               className="w-full hidden md:flex items-center justify-center rounded-xl p-3 mt-2 text-sm text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 transition-colors"
