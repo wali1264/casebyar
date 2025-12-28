@@ -7,7 +7,7 @@ const Login: React.FC = () => {
     const { login, signup } = useAppContext();
     const [loginType, setLoginType] = useState<'admin' | 'staff'>('admin');
     const [isLoginMode, setIsLoginMode] = useState(true);
-    const [identifier, setIdentifier] = useState(''); // email for admin, username for staff
+    const [identifier, setIdentifier] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
@@ -25,7 +25,6 @@ const Login: React.FC = () => {
         
         try {
             if (isLoginMode) {
-                // If user is in admin tab but forgot to put @, suggest staff tab
                 if (loginType === 'admin' && !identifier.includes('@')) {
                     setError('⚠️ برای ورود مدیر کل ایمیل لازم است. اگر کارمند هستید از تب کارکنان وارد شوید.');
                     setIsSubmitting(false);
@@ -44,7 +43,6 @@ const Login: React.FC = () => {
                     }
                 }
             } else {
-                // Signup only for Admin
                 const result = await signup(identifier, password);
                 if (result.success) {
                     setMessage(result.message);
@@ -92,13 +90,11 @@ const Login: React.FC = () => {
     return (
         <div className="flex items-center justify-center min-h-screen bg-slate-100 p-4">
             <div className="w-full max-w-md bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl border border-white overflow-hidden modal-animate">
-                {/* Header Section */}
                 <div className="pt-10 pb-6 px-8 text-center bg-gradient-to-b from-blue-50/50 to-transparent">
-                    <h1 className="text-4xl font-black text-blue-600 mb-2">کتابستان</h1>
-                    <p className="text-slate-500 font-medium">سیستم هوشمند مدیریت فروشگاه</p>
+                    <h1 className="text-4xl font-black text-blue-600 mb-2">کاسب یار</h1>
+                    <p className="text-slate-500 font-medium">سیستم هوشمند مدیریت کسب و کار</p>
                 </div>
 
-                {/* Login Tabs */}
                 <div className="flex p-2 bg-slate-100 mx-8 rounded-2xl mb-8">
                     <button 
                         onClick={() => { setLoginType('admin'); setError(''); setIsLoginMode(true); }}

@@ -5,11 +5,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#3b82f6" />
-  <meta name="description" content="کتابستان - سیستم مدیریت فروشگاه" />
+  <meta name="description" content="کاسب یار - سیستم مدیریت هوشمند کسب و کار" />
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="کتابستان">
-  <title>کتابستان</title>
+  <meta name="apple-mobile-web-app-title" content="کاسب یار">
+  <title>کاسب یار</title>
   
   <!-- PWA Configuration -->
   <link rel="manifest" href="/manifest.json" />
@@ -27,7 +27,7 @@
       background-color: #fdfcfb;
       color: #1f2937;
       overflow: hidden;
-      overscroll-behavior-y: none; /* Prevents pull-to-refresh on mobile for app-like feel */
+      overscroll-behavior-y: none;
     }
     body::before {
       content: '';
@@ -50,20 +50,18 @@
       100% { background-position: 0% 50%; }
     }
     
-    /* Typography System */
     h1 {
-        font-size: 2.5rem; /* 40px */
+        font-size: 2.5rem;
         font-weight: 800;
         letter-spacing: -0.025em;
         color: #111827;
     }
      h2 {
-        font-size: 1.75rem; /* 28px */
+        font-size: 1.75rem;
         font-weight: 700;
         color: #1f2937;
     }
     
-    /* Interactive Elements */
     .btn-primary {
         transition: all 0.3s ease;
         transform: translateY(0);
@@ -80,12 +78,10 @@
         border-color: #3b82f6;
     }
     
-    /* Zebra Striping for Tables */
     .table-zebra tbody tr:nth-child(even) {
       background-color: rgba(59, 130, 246, 0.04);
     }
     
-    /* Modal Animation */
     .modal-animate {
         animation: modal-zoom-in 0.3s cubic-bezier(0.25, 1, 0.5, 1) forwards;
     }
@@ -94,7 +90,6 @@
         to { transform: scale(1); opacity: 1; }
     }
     
-    /* Responsive Tables */
     @media (max-width: 767px) {
       .responsive-table thead {
           display: none;
@@ -109,20 +104,20 @@
       }
       .responsive-table td {
           display: block;
-          text-align: left; /* for RTL */
+          text-align: left;
           padding: 0.5rem 0;
           border: none;
           position: relative;
-          padding-right: 50%; /* for RTL */
+          padding-right: 50%;
       }
       .responsive-table td:before {
           content: attr(data-label);
           position: absolute;
-          right: 0.5rem; /* for RTL */
+          right: 0.5rem;
           width: 45%;
-          padding-left: 0.5rem; /* for RTL */
+          padding-left: 0.5rem;
           font-weight: 600;
-          text-align: right; /* for RTL */
+          text-align: right;
           color: #374151;
       }
       .responsive-table td:last-child {
@@ -137,14 +132,11 @@
       }
     }
 
-
     @media print {
       @page {
         size: auto;
-        margin: 10mm; /* Safety margin of 10mm */
+        margin: 10mm;
       }
-      
-      /* 1. Reset Global Styles & Hide Everything safely */
       html, body {
         height: auto !important;
         overflow: visible !important;
@@ -152,19 +144,13 @@
         margin: 0 !important;
         padding: 0 !important;
       }
-
-      /* Use visibility hidden instead of display none to prevent layout collapse if needed, but ensure they take no space */
       body * {
         visibility: hidden;
       }
-
-      /* 2. Target the specific print container and its children */
       #print-modal-content, 
       #print-modal-content * {
         visibility: visible !important;
       }
-
-      /* 3. Position the print content absolutely to 0,0 of the page */
       #print-modal-content {
         position: absolute !important;
         left: 0 !important;
@@ -172,19 +158,13 @@
         width: 100% !important;
         margin: 0 !important;
         padding: 0 !important;
-        
-        /* Ensure it's not constrained */
         overflow: visible !important;
         height: auto !important;
-        
-        /* Reset styling */
         background: white !important;
         color: black !important;
         box-shadow: none !important;
         border: none !important;
       }
-      
-      /* 4. Kill Scrollbars & Height Limits */
       #print-modal-content [class*="overflow-"],
       #print-modal-content [class*="max-h-"],
       #print-modal-content [class*="min-h-"],
@@ -196,43 +176,33 @@
         flex: none !important;
         display: block !important;
       }
-      
-      /* 5. Optimize Tables */
       table {
         width: 100% !important;
         border-collapse: collapse !important;
         table-layout: fixed !important;
       }
-      
       thead {
-        display: table-header-group !important; /* Repeats header on new page */
+        display: table-header-group !important;
       }
-      
       tbody {
         display: table-row-group !important;
       }
-      
       tr {
-        page-break-inside: avoid !important; /* Prevents cutting row in half */
+        page-break-inside: avoid !important;
         background-color: transparent !important;
       }
-      
       th, td {
-        border: 1px solid #000 !important; /* High contrast borders */
+        border: 1px solid #000 !important;
         padding: 4px 6px !important;
         color: #000 !important;
-        font-size: 12px !important; /* Optimized for thermal width */
+        font-size: 12px !important;
         word-wrap: break-word;
       }
-      
-      /* 6. Hide Interactive Elements explicitly */
       .no-print, 
       button,
       [role="button"] {
         display: none !important;
       }
-      
-      /* Ensure Text Contrast */
       h1, h2, h3, p, span, div {
          color: #000 !important;
          text-shadow: none !important;
@@ -256,7 +226,6 @@
   <div id="root"></div>
   <script type="module" src="./index.tsx"></script>
   <script>
-    // PWA Registration Script
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js')

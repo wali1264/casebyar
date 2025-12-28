@@ -85,10 +85,10 @@ interface AppContextType extends AppState {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const getDeviceId = () => {
-    let id = localStorage.getItem('ketabestan_device_id');
+    let id = localStorage.getItem('kasebyar_device_id');
     if (!id) {
         id = crypto.randomUUID();
-        localStorage.setItem('ketabestan_device_id', id);
+        localStorage.setItem('kasebyar_device_id', id);
     }
     return id;
 };
@@ -98,7 +98,7 @@ const getDefaultState = (): AppState => {
         products: [], saleInvoices: [], purchaseInvoices: [], customers: [],
         suppliers: [], employees: [], expenses: [], services: [],
         storeSettings: {
-            storeName: 'کتابستان', address: '', phone: '', lowStockThreshold: 10,
+            storeName: 'کاسب یار', address: '', phone: '', lowStockThreshold: 10,
             expiryThresholdMonths: 3, currencyName: 'افغانی', currencySymbol: 'AFN'
         },
         cart: [], customerTransactions: [], supplierTransactions: [], payrollTransactions: [],
@@ -129,7 +129,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [isLoading, setIsLoading] = useState(true);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
-    const [autoBackupEnabled, setAutoBackupEnabled] = useState(() => localStorage.getItem('ketabestan_auto_backup') === 'true');
+    const [autoBackupEnabled, setAutoBackupEnabled] = useState(() => localStorage.getItem('kasebyar_auto_backup') === 'true');
 
     const showToast = useCallback((message: string) => setToastMessage(message), []);
 
@@ -166,19 +166,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                             if (!success) { isAuth = false; await logout(); }
                         }
                     }
-                } else if (!navigator.onLine && localStorage.getItem('ketabestan_offline_auth') === 'true') {
+                } else if (!navigator.onLine && localStorage.getItem('kasebyar_offline_auth') === 'true') {
                     isAuth = true;
                     restoredUser = { id: session.user.id, username: session.user.email || 'Admin', roleId: 'admin-role' };
                 }
             } else {
-                const localStaff = localStorage.getItem('ketabestan_staff_user');
+                const localStaff = localStorage.getItem('kasebyar_staff_user');
                 if (localStaff) {
                     try {
                         const parsedStaff = JSON.parse(localStaff) as User;
                         const dbUser = users.find(u => u.id === parsedStaff.id);
                         if (dbUser) { isAuth = true; restoredUser = dbUser; }
-                        else { localStorage.removeItem('ketabestan_staff_user'); }
-                    } catch(e) { localStorage.removeItem('ketabestan_staff_user'); }
+                        else { localStorage.removeItem('kasebyar_staff_user'); }
+                    } catch(e) { localStorage.removeItem('kasebyar_staff_user'); }
                 }
             }
 
@@ -216,27 +216,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!state.isAuthenticated || !autoBackupEnabled) return;
 
         const checkBackup = async () => {
-            const lastBackup = localStorage.getItem('ketabestan_last_backup_time');
+            const lastBackup = localStorage.getItem('kasebyar_last_backup_time');
             const now = Date.now();
             const oneDay = 24 * 60 * 60 * 1000;
 
             if (!lastBackup || (now - parseInt(lastBackup)) >= oneDay) {
                 console.log("Starting automatic 24h backup...");
-                
-                // 1. Always download locally (as requested)
                 exportData();
-                
-                // 2. If online and admin, save to cloud
                 if (navigator.onLine && state.currentUser && state.currentUser.roleId === 'admin-role') {
                     await cloudBackup();
                 }
-
-                localStorage.setItem('ketabestan_last_backup_time', now.toString());
+                localStorage.setItem('kasebyar_last_backup_time', now.toString());
                 showToast("✅ پشتیبان‌گیری خودکار ۲۴ ساعته انجام شد.");
             }
         };
 
-        const timer = setTimeout(checkBackup, 5000); // Wait 5s after login to avoid heavy initial load
+        const timer = setTimeout(checkBackup, 5000);
         return () => clearTimeout(timer);
     }, [state.isAuthenticated, autoBackupEnabled, state.currentUser]);
 
@@ -251,14 +246,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 const deviceId = getDeviceId();
                 if (profile.current_device_id && profile.current_device_id !== deviceId) return { success: false, message: 'این حساب در دستگاه دیگری فعال است.', locked: true };
                 if (!profile.current_device_id) await api.updateProfile(data.user.id, { current_device_id: deviceId });
-                localStorage.setItem('ketabestan_offline_auth', 'true');
+                localStorage.setItem('kasebyar_offline_auth', 'true');
                 await fetchData();
                 return { success: true, message: '✅ ورود موفق' };
             } catch (e) { return { success: false, message: '❌ خطا در اتصال.' }; }
         } else {
             const user = await api.verifyStaffCredentials(identifier, password);
             if (user) {
-                localStorage.setItem('ketabestan_staff_user', JSON.stringify(user));
+                localStorage.setItem('kasebyar_staff_user', JSON.stringify(user));
                 await fetchData();
                 return { success: true, message: `✅ خوش آمدید ${user.username}` };
             } else return { success: false, message: 'نام کاربری یا رمز عبور اشتباه است.' };
@@ -275,9 +270,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const logout = async (): Promise<{ success: boolean; message: string }> => {
         setIsLoggingOut(true);
-        const localStaff = localStorage.getItem('ketabestan_staff_user');
+        const localStaff = localStorage.getItem('kasebyar_staff_user');
         if (localStaff) {
-            localStorage.removeItem('ketabestan_staff_user');
+            localStorage.removeItem('kasebyar_staff_user');
             setTimeout(() => {
                 setState(prev => ({ ...prev, isAuthenticated: false, currentUser: null }));
                 setIsLoggingOut(false);
@@ -295,7 +290,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const { data: { user } } = await supabase.auth.getUser();
             if (user) await api.updateProfile(user.id, { current_device_id: null });
             await supabase.auth.signOut();
-            localStorage.removeItem('ketabestan_offline_auth');
+            localStorage.removeItem('kasebyar_offline_auth');
             setTimeout(() => {
                 setState(prev => ({ ...prev, isAuthenticated: false, currentUser: null }));
                 setIsLoggingOut(false);
@@ -321,7 +316,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `Ketabestan_Backup_${new Date().toISOString().split('T')[0]}.json`;
+        link.download = `KasebYar_Backup_${new Date().toISOString().split('T')[0]}.json`;
         link.click();
         URL.revokeObjectURL(url);
     };
@@ -365,7 +360,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const handleSetAutoBackup = (enabled: boolean) => {
         setAutoBackupEnabled(enabled);
-        localStorage.setItem('ketabestan_auto_backup', enabled.toString());
+        localStorage.setItem('kasebyar_auto_backup', enabled.toString());
         showToast(enabled ? "✅ پشتیبان‌گیری خودکار ۲۴ ساعته فعال شد." : "⚠️ پشتیبان‌گیری خودکار غیرفعال شد.");
     };
 
@@ -534,7 +529,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
          setState(prev => ({ ...prev, saleInvoices: prev.saleInvoices.map(inv => inv.id === id ? { ...inv, originalInvoiceId: name } : inv) }));
     };
 
-    // --- Inventory / Purchases ---
     const addProduct = (p: any, b: any) => { api.addProduct(p, b).then(np => { setState(prev => ({ ...prev, products: [...prev.products, np] })); showToast('✅ ذخیره شد.'); }); return { success: true, message: 'در حال ذخیره...' }; };
     const updateProduct = (p: any) => { api.updateProduct(p).then(() => { setState(prev => ({ ...prev, products: prev.products.map(x => x.id === p.id ? p : x) })); showToast('✅ ویرایش شد.'); }); return { success: true, message: 'در حال ویرایش...' }; };
     const deleteProduct = (id: string) => api.deleteProduct(id).then(() => { setState(prev => ({ ...prev, products: prev.products.filter(p => p.id !== id) })); showToast('✅ حذف شد.'); });
@@ -588,7 +582,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return { success: true, message: "در حال ثبت..." };
     };
 
-    // --- Other Entities ---
     const updateSettings = (n: any) => api.updateSettings(n).then(() => { setState(prev => ({ ...prev, storeSettings: n })); showToast("✅ تنظیمات ذخیره شد."); });
     const addService = (s: any) => api.addService(s).then(() => fetchData());
     const deleteService = (id: string) => api.deleteService(id).then(() => fetchData());
@@ -639,6 +632,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
 export const useAppContext = (): AppContextType => {
     const context = useContext(AppContext);
-    if (context === undefined) throw new Error('useAppContext must be used within an AppProvider');
+    if (context === undefined) throw new Error('useAppContext must be used within AppProvider');
     return context;
 };

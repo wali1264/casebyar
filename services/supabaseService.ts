@@ -29,7 +29,7 @@ const DEFAULT_ADMIN_ROLE: Role = {
 };
 
 const DEFAULT_SETTINGS: StoreSettings = {
-    storeName: 'کتابستان',
+    storeName: 'کاسب یار',
     address: '',
     phone: '',
     lowStockThreshold: 10,
@@ -63,7 +63,7 @@ export const api = {
         }
     },
 
-    // --- CLOUD BACKUP (New Feature) ---
+    // --- CLOUD BACKUP ---
     saveCloudBackup: async (userId: string, appState: any): Promise<boolean> => {
         try {
             const { error } = await supabase.from('backups').upsert({
