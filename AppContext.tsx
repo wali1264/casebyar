@@ -154,7 +154,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             let isAuth = false;
             let restoredUser = null;
 
-            if (session?.user) {
+            // Session Safety Lock Check:
+            // If the manager purposefully switched user, we should not auto-login even if Supabase token is valid.
+            const isSessionLocked = localStorage.getItem('kasebyar_session_locked') === 'true';
+
+            if (session?.user && !isSessionLocked) {
                 const profile = await api.getProfile(session.user.id);
                 const deviceId = getDeviceId();
                 
@@ -176,7 +180,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 }
             } else {
                 const localStaff = localStorage.getItem('kasebyar_staff_user');
-                if (localStaff) {
+                if (localStaff && !isSessionLocked) {
                     try {
                         const parsedStaff = JSON.parse(localStaff) as User;
                         const dbUser = users.find(u => u.id === parsedStaff.id);
@@ -235,6 +239,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 
                 localStorage.setItem('kasebyar_offline_auth', 'true');
                 localStorage.setItem('kasebyar_shop_active', 'true');
+                localStorage.setItem('kasebyar_session_locked', 'false'); // Unlock auto-restore
                 setIsShopActive(true);
                 
                 await fetchData();
@@ -247,6 +252,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const user = await api.verifyStaffCredentials(identifier, password);
             if (user) {
                 localStorage.setItem('kasebyar_staff_user', JSON.stringify(user));
+                localStorage.setItem('kasebyar_session_locked', 'false'); // Unlock auto-restore
                 await fetchData();
                 return { success: true, message: `✅ خوش آمدید ${user.username}` };
             } else return { success: false, message: 'نام کاربری یا رمز عبور اشتباه است.' };
@@ -267,6 +273,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         if (isStaff) {
             localStorage.removeItem('kasebyar_staff_user');
+            localStorage.setItem('kasebyar_session_locked', 'true'); // Prevent auto-restore
             setTimeout(() => {
                 setState(prev => ({ ...prev, isAuthenticated: false, currentUser: null }));
                 setIsLoggingOut(false);
@@ -287,12 +294,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 await supabase.auth.signOut();
                 localStorage.removeItem('kasebyar_offline_auth');
                 localStorage.setItem('kasebyar_shop_active', 'false');
+                localStorage.setItem('kasebyar_session_locked', 'true'); // Prevent auto-restore
                 setIsShopActive(false);
             } catch (e) { console.error(e); }
         } else {
             // Switch User: Just clear current user but keep device bound and shop active
+            localStorage.setItem('kasebyar_session_locked', 'true'); // Crucial: Prevent auto-restore on refresh
             setState(prev => ({ ...prev, isAuthenticated: false, currentUser: null }));
-            // We don't sign out from Supabase auth session to keep the "offline_auth" capability for later
+            // We don't sign out from Supabase auth session to keep the "offline_auth" capability and "Shop Active" for later
         }
 
         setTimeout(() => {
