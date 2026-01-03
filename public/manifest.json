@@ -1,27 +1,21 @@
-
 {
-  "name": "کاسب یار - دستیار هوشمند کسب و کار",
-  "short_name": "کاسب یار",
-  "description": "سیستم جامع مدیریت هوشمند کسب و کار و فروشگاه",
-  "id": "/",
-  "start_url": "/",
-  "scope": "/",
-  "display": "standalone",
-  "background_color": "#fdfcfb",
-  "theme_color": "#3b82f6",
-  "orientation": "portrait",
+  "short_name": "طبیب هوشمند",
+  "name": "دستیار پزشکی هوشمند | Tabib AI",
   "icons": [
     {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
+      "src": "icon-192.png",
       "type": "image/png",
-      "purpose": "any"
+      "sizes": "192x192"
     },
     {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
+      "src": "icon-512.png",
       "type": "image/png",
-      "purpose": "any"
+      "sizes": "512x512"
     }
-  ]
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#2563eb",
+  "background_color": "#f3f4f6",
+  "orientation": "any"
 }
