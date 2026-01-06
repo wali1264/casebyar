@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { digitizePrescription, processDigitalPadAI, checkPrescriptionSafety, processScribeAudio, transcribeMedicalAudio } from '../services/geminiService';
 import { saveTemplate, getAllTemplates, deleteTemplate, getSettings, saveSettings, saveRecord, getDoctorProfile, getUniquePatients, getAllDrugs, trackDrugUsage, getUsageStats, saveComplaintTemplate, getAllComplaintTemplates, deleteComplaintTemplate, getNextDisplayId, getRecordsByName } from '../services/db';
 import { PrescriptionItem, PrescriptionTemplate, PrescriptionSettings, DoctorProfile, PatientVitals, PatientRecord, Drug, DrugUsage, PrescriptionRecord, LayoutElement } from '../types';
-import { FileSignature, ScanLine, Printer, Save, Trash, Plus, CheckCircle, Search, LayoutTemplate, Activity, UserPlus, Stethoscope, ArrowLeft, X, Phone, Scale, AlertCircle, WifiOff, Camera, Image as ImageIcon, Heart, Thermometer, Wind, Droplet, Hash, FileText, ChevronRight, Loader2, Sparkles, User, RotateCw, History, RefreshCw, Zap, TrendingUp, Pill, Beaker, SprayCan, Brain, ZapOff, ShieldAlert, ShieldCheck, Info, Mic, MicOff, List, Monitor, ListChecks, BookmarkPlus, PenTool, Eraser, RotateCcw, ZoomIn, ZoomOut, Check, Maximize, GripVertical, Settings2, Type, MonitorOff } from 'lucide-react';
+import { FileSignature, ScanLine, Printer, Save, Trash, Plus, CheckCircle, Search, LayoutTemplate, Activity, UserPlus, Stethoscope, ArrowLeft, X, Phone, Scale, AlertCircle, WifiOff, Camera, ImageIcon, Heart, Thermometer, Wind, Droplet, Hash, FileText, ChevronRight, Loader2, Sparkles, User, RotateCw, History, RefreshCw, Zap, TrendingUp, Pill, Beaker, SprayCan, Brain, ZapOff, ShieldAlert, ShieldCheck, Info, Mic, MicOff, List, Monitor, ListChecks, BookmarkPlus, PenTool, Eraser, RotateCcw, ZoomIn, ZoomOut, Check, Maximize, GripVertical, Settings2, Type, MonitorOff } from 'lucide-react';
 
 interface PrescriptionProps {
   initialRecord: PatientRecord | null;
@@ -38,16 +38,18 @@ const MobileVitalInput = ({ label, icon: Icon, value, prevValue, unit, field, co
 );
 
 // --- DESKTOP PROFESSIONAL VITAL INPUT ---
-const DesktopVitalSidebarItem = ({ label, icon: Icon, value, unit, field, color, onChange }: any) => (
+const DesktopVitalSidebarItem = ({ label, icon: Icon, value, unit, field, color, onChange, onKeyDown, inputRef }: any) => (
   <div className="bg-white p-2 rounded-xl border border-gray-100 shadow-sm hover:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-50 transition-all flex flex-col items-center gap-0">
     <div className="flex items-center justify-between w-full mb-0.5 px-1">
       <Icon size={12} className={color} />
       {unit && <span className="text-[7px] font-black text-gray-300 uppercase">{unit}</span>}
     </div>
     <input 
+      ref={inputRef}
       className="w-full text-center text-base font-black text-gray-800 outline-none bg-transparent placeholder:text-gray-100"
       placeholder=""
       value={value}
+      onKeyDown={onKeyDown}
       onChange={e => onChange(field, e.target.value)}
     />
     <div className={`text-[9px] font-black uppercase tracking-tighter ${color} opacity-90`}>
@@ -112,6 +114,24 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
   const [safetyLoading, setSafetyLoading] = useState(false);
   const [safetyReport, setSafetyReport] = useState<any | null>(null);
   const [showSafetyModal, setShowSafetyModal] = useState(false);
+
+  // --- REFS FOR SMART NAVIGATION ---
+  const patientNameRef = useRef<HTMLInputElement>(null);
+  const ageRef = useRef<HTMLInputElement>(null);
+  const weightRef = useRef<HTMLInputElement>(null);
+  const diagnosisRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<any[]>([]);
+  const autoFocusNewItem = useRef(false);
+
+  // Vitals Refs for chain navigation
+  const vitalRefs = {
+    bp: useRef<HTMLInputElement>(null),
+    hr: useRef<HTMLInputElement>(null),
+    temp: useRef<HTMLInputElement>(null),
+    rr: useRef<HTMLInputElement>(null),
+    bs: useRef<HTMLInputElement>(null),
+    weight: useRef<HTMLInputElement>(null)
+  };
 
   // --- AI SCRIBE STATE ---
   const [isRecordingScribe, setIsRecordingScribe] = useState(false);
@@ -189,6 +209,24 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
     }
   }, [initialRecord]);
 
+  // AUTO FOCUS ON EXPRESS MODE START
+  useEffect(() => {
+    if (viewMode === 'editor' && isExpressMode && window.innerWidth >= 1024) {
+      setTimeout(() => {
+        patientNameRef.current?.focus();
+      }, 500);
+    }
+  }, [viewMode, isExpressMode]);
+
+  // SMART FOCUS FOR NEW DRUG ITEMS
+  useEffect(() => {
+    if (autoFocusNewItem.current && items.length > 0) {
+      const lastIndex = items.length - 1;
+      itemRefs.current[lastIndex]?.drug?.focus();
+      autoFocusNewItem.current = false;
+    }
+  }, [items.length]);
+
   useEffect(() => {
     if (!selectedPatient || viewMode !== 'editor' || isExpressMode) return;
     const draft = { items, diagnosis, chiefComplaint, vitals, timestamp: Date.now() };
@@ -222,6 +260,10 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
       const p = await getDoctorProfile();
       if (p) setDoctorProfile(p);
     } catch (e) { console.error(e); }
+  };
+
+  const smartCapitalize = (str: string) => {
+    return str.replace(/\b\w/g, char => char.toUpperCase());
   };
 
   const filteredPatients = allPatients.filter(p => 
@@ -272,6 +314,19 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
 
   const handleVitalChange = (field: string, value: string) => {
     setVitals(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleVitalKeyDown = (e: React.KeyboardEvent, current: string) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      switch(current) {
+        case 'bp': vitalRefs.hr.current?.focus(); break;
+        case 'hr': vitalRefs.temp.current?.focus(); break;
+        case 'temp': vitalRefs.rr.current?.focus(); break;
+        case 'rr': vitalRefs.bs.current?.focus(); break;
+        case 'bs': vitalRefs.weight.current?.focus(); break;
+      }
+    }
   };
 
   const applyDraft = () => {
@@ -572,7 +627,7 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
      setIsDraggingToolbar(true);
-     toolbarDragOffset.current = { x: clientX - padToolbarPos.x, y: clientY - padToolbarPos.y };
+     toolbarDragOffset.current = { x: clientX - padToolbarPos.x, y: clientY - toolbarDragOffset.current.y };
   };
 
   const handleToolbarMove = (e: any) => {
@@ -660,6 +715,29 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
       setIsNewPatientPadMode(false); // Reset mode after successful unique save
     } catch (e) { 
       console.error(e); 
+    }
+  };
+
+  // --- ATOMIC REFRESH LOGIC (Workflow Continuity) ---
+  const handleNextPatient = () => {
+    setItems([]);
+    setDiagnosis('');
+    setChiefComplaint('');
+    setVitals({
+      bloodPressure: '', heartRate: '', temperature: '', spO2: '', weight: '', height: '', respiratoryRate: '', bloodSugar: ''
+    });
+    
+    if (isExpressMode) {
+      // Clear identity for current Guest but keep Express Mode open
+      setSelectedPatient(p => p ? ({ ...p, name: '', age: '' }) : null);
+      // Smart Auto-Focus back to Patient Name
+      setTimeout(() => {
+        patientNameRef.current?.focus();
+      }, 100);
+    } else {
+      // For formal patients, go back to landing for search
+      setViewMode('landing');
+      setSelectedPatient(null);
     }
   };
 
@@ -762,15 +840,16 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
 
   const updateItem = (index: number, field: keyof PrescriptionItem, value: string) => {
     const newItems = [...items];
-    newItems[index] = { ...newItems[index], [field]: value };
+    const finalValue = (field === 'drug') ? smartCapitalize(value) : value;
+    newItems[index] = { ...newItems[index], [field]: finalValue };
     setItems(newItems);
-    if (field === 'drug') setSearchQuery(value);
+    if (field === 'drug') setSearchQuery(finalValue);
   };
 
   const selectSuggestedDrug = (drugName: string) => {
     if (activeItemIndex === null) return;
     const newItems = [...items];
-    newItems[activeItemIndex].drug = drugName;
+    newItems[activeItemIndex].drug = smartCapitalize(drugName);
     const stats = usageStats.find(u => u.drugName === drugName);
     if (stats) {
         if (stats.lastDosage) newItems[activeItemIndex].dosage = stats.lastDosage;
@@ -962,7 +1041,7 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
        .signature-area { text-align: center; border-top: 1px solid #1e3a8a; padding-top: 2mm; width: 50mm; }
        .footer-motto { font-size: 8pt; font-style: italic; color: #94a3b8; text-align: center; width: 100%; border-top: 1px solid #f1f5f9; padding-top: 4mm; margin-top: 8mm; }
        .custom-container { position: relative; width: 100%; height: 100%; overflow: hidden; padding: 0 !important; margin: 0 !important; }
-       .print-element { position: absolute; white-space: normal; word-wrap: break-word; line-height: 1.4; }
+       .print-element { position: absolute; white-space: normal; word-wrap: break-word; line-height: 1.4; transform-origin: top right; }
        .bg-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: fill; z-index: -1; }
      `;
      let content = '';
@@ -1015,7 +1094,7 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
      win.document.write(`<html dir="rtl"><head><title>Prescription</title><link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700;900&display=swap" rel="stylesheet"><style>${style}</style></head><body>${content}</body></html>`);
      win.document.close();
      const bgImg = win.document.getElementById('bgImg') as HTMLImageElement;
-     const triggerPrint = () => { setTimeout(() => { win.print(); if (isExpressMode) setViewMode('landing'); }, 400); };
+     const triggerPrint = () => { setTimeout(() => { win.print(); }, 400); };
      if (bgImg && !bgImg.complete) { bgImg.onload = triggerPrint; bgImg.onerror = triggerPrint; } else { triggerPrint(); }
   };
 
@@ -1031,7 +1110,25 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
           <p className="text-gray-500 mb-8 font-medium">نام بیمار را جستجو کنید یا از کپچر عملیاتی برای ثبت آنی استفاده کنید</p>
           
           <div className="flex justify-center gap-6 mb-10 animate-slide-up">
-             <button onClick={() => setShowQuickEntryModal(true)} title="نسخه سریع (بدون بایگانی)" className="flex flex-col items-center gap-2 group">
+             <button onClick={() => {
+                if (window.innerWidth >= 1024) {
+                   const guestRecord: PatientRecord = {
+                       id: `guest_${Date.now()}`,
+                       name: '',
+                       age: '',
+                       gender: 'male',
+                       chiefComplaint: '', 
+                       history: '',
+                       visitDate: Date.now(),
+                       status: 'waiting',
+                       vitals: { bloodPressure: '', heartRate: '', temperature: '', spO2: '', weight: '', height: '', respiratoryRate: '', bloodSugar: '' }
+                   };
+                   handleSelectPatient(guestRecord);
+                   setIsExpressMode(true);
+                } else {
+                   setShowQuickEntryModal(true);
+                }
+             }} title="نسخه سریع (بدون بایگانی)" className="flex flex-col items-center gap-2 group">
                 <div className="w-16 h-16 bg-white border-2 border-teal-50 rounded-[1.5rem] flex items-center justify-center text-teal-600 shadow-sm group-hover:shadow-xl group-hover:bg-teal-50 group-hover:border-teal-100 transition-all active:scale-95">
                    <User size={30} />
                 </div>
@@ -1056,7 +1153,7 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
           <div className="relative max-w-2xl mx-auto mb-4">
              <div className="relative group">
                 <div className="absolute inset-y-2 right-4 flex items-center pointer-events-none text-gray-400 group-focus-within:text-teal-600 transition-colors"><Search size={24} /></div>
-                <input type="text" autoFocus placeholder="نام یا کد بیمار (001) را جستجو کنید..." className="w-full p-6 pr-14 text-xl bg-gray-50 border border-gray-200 rounded-3xl focus:ring-8 focus:ring-teal-50 focus:border-teal-500 outline-none transition-all shadow-inner font-bold text-gray-700" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                <input type="text" placeholder="نام یا کد بیمار (001) را جستجو کنید..." className="w-full p-6 pr-14 text-xl bg-gray-50 border border-gray-200 rounded-3xl focus:ring-8 focus:ring-teal-50 focus:border-teal-500 outline-none transition-all shadow-inner font-bold text-gray-700" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
              </div>
              {searchTerm && filteredPatients.length > 0 && (
                <div className="absolute top-full left-0 right-0 mt-3 bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden z-20 max-h-72 overflow-y-auto animate-slide-up">
@@ -1229,6 +1326,8 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
            resize: none;
            min-height: 40px;
         }
+        .ghost-input { background: transparent; border: none; border-bottom: 2px solid #f1f5f9; border-radius: 0; padding: 4px 0; outline: none; transition: border-color 0.3s; }
+        .ghost-input:focus { border-color: #4f46e5; }
       `}</style>
 
       {(loading || isProcessingScribe || isProcessingCC) && (
@@ -1265,7 +1364,7 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
                    <button onClick={handleAuditSafety} disabled={safetyLoading || items.length === 0} className={`p-2 rounded-xl transition-all ${isOnline ? (safetyLoading ? 'bg-indigo-50 text-indigo-400' : 'bg-indigo-50 text-indigo-600 animate-safety-pulse') : 'bg-gray-100 text-gray-300'}`}>{safetyLoading ? <Loader2 size={20} className="animate-spin" /> : <ShieldAlert size={20} />}</button>
                    <button onClick={() => setShowSaveModal(true)} disabled={items.length === 0} className="p-2 rounded-xl bg-gray-50 text-gray-600 disabled:opacity-50"><Save size={20} /></button>
                    <button onClick={handleAutoPrint} disabled={items.length === 0} className="p-2 rounded-xl bg-gray-50 text-gray-600 disabled:opacity-50"><Printer size={20} /></button>
-                   <button onClick={startCamera} disabled={!isOnline} className={`p-2 rounded-xl transition-colors ${isOnline ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-300'}`}><Camera size={20} /></button>
+                   <button onClick={startCamera} disabled={!isOnline} className={`p-2 rounded-xl transition-colors ${isOnline ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-100'}`}><Camera size={20} /></button>
                 </div>
              </div>
              <div className="bg-gray-100 p-1 rounded-xl flex">
@@ -1289,7 +1388,7 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
                 {mobileTab === 'rx' && (
                    <div className="space-y-4 animate-fade-in">
                       <div className={`bg-white p-4 rounded-2xl border transition-all duration-500 ${isRecordingScribe ? 'scribe-glow' : 'border-gray-100 shadow-sm'}`}><div className="flex justify-between items-center mb-2"><div className="flex items-center gap-2"><label className="flex items-center gap-2 text-sm font-bold text-gray-500"><Activity size={16} className="text-purple-500" />تشخیص پزشک</label><div className="flex gap-1"><button onClick={() => setShowComplaintModal(true)} className={`p-1.5 rounded-lg transition-all ${chiefComplaint ? 'bg-indigo-600 text-white shadow-lg' : 'bg-gray-100 text-gray-400'}`}><ListChecks size={14} /></button><button onClick={() => setShowPreferenceModal(true)} className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600"><RotateCw size={14} /></button></div></div>{isRecordingScribe && (<div className="flex gap-1 items-end h-4">{[...Array(6)].map((_, i) => <div key={i} className="waveform-bar" style={{ animationDelay: `${i * 0.1}s` }}></div>)}</div>)}</div><textarea className={`w-full p-3 bg-gray-50 rounded-xl outline-none text-gray-700 h-20 resize-none focus:bg-white focus:ring-2 focus:ring-purple-100 transition-all ${isRecordingScribe ? 'bg-purple-50/50 italic' : ''}`} placeholder={isRecordingScribe ? "در حال شنیدن تشخیص..." : "تشخیص نهایی را بنویسید..."} value={diagnosis} onChange={e => setDiagnosis(e.target.value)} /></div>
-                      <div className="space-y-3">{items.map((item, idx) => (<div key={idx} className={`bg-white p-4 rounded-2xl border transition-all duration-500 relative group animate-slide-up ${isRecordingScribe ? 'scribe-glow' : 'border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)]'}`}><button onClick={() => removeItem(idx)} className="absolute top-4 left-4 p-2 bg-red-50 text-red-500 rounded-xl"><Trash size={18} /></button><div className="mb-4 pl-12 relative"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">نام دارو</label><input className="w-full font-bold text-gray-800 text-lg border-b border-gray-100 pb-2 outline-none focus:border-indigo-500 placeholder-gray-300" placeholder="مثال: Tab Amoxicillin 500" value={item.drug} onFocus={() => { setActiveItemIndex(idx); setSuggestionType('drug'); setSearchQuery(item.drug); }} onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'drug' ? null : prev); }, 200); }} onChange={e => updateItem(idx, 'drug', e.target.value)} />{suggestionType === 'drug' && activeItemIndex === idx && getDrugSuggestions().length > 0 && (<div className="absolute bottom-full right-0 left-0 bg-white shadow-2xl rounded-2xl border border-gray-200 z-[9999] overflow-hidden mb-2 animate-slide-up flex flex-col-reverse">{getDrugSuggestions().map(d => (<button key={d.id} onMouseDown={(e) => { e.preventDefault(); selectSuggestedDrug(d.name); }} className="w-full text-right p-3 hover:bg-indigo-50 border-b border-gray-50 last:border-0 flex items-center justify-between transition-colors font-bold text-gray-700"><div className="flex items-center gap-3">{getFormIcon(d.name)}<span>{d.name}</span></div><Zap size={14} className="text-amber-500" /></button>))}</div>)}</div><div className="flex gap-3"><div className="flex-1 bg-gray-50 p-2 rounded-xl border border-gray-100 relative"><label className="text-[10px] font-bold text-gray-400 block mb-1">تعداد</label><input className="w-full bg-transparent font-mono text-center font-bold text-gray-700 outline-none placeholder-gray-300" placeholder="N=30" value={item.dosage} onFocus={() => { setActiveItemIndex(idx); setSuggestionType('dosage'); }} onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'dosage' ? null : prev); }, 200); }} onChange={e => updateItem(idx, 'dosage', e.target.value)} />{suggestionType === 'dosage' && activeItemIndex === idx && (<div className="absolute bottom-full right-0 left-0 bg-white/95 backdrop-blur-md shadow-2xl p-2 rounded-t-2xl flex gap-2 overflow-x-auto no-scrollbar border-t border-indigo-100 z-50">{getSmartDosages().map(d => (<button key={d} onMouseDown={(e) => { e.preventDefault(); selectSuggestedDosage(d); }} className="whitespace-nowrap bg-teal-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black shadow-lg">{d}</button>))}</div>)}</div><div className="flex-[2] bg-gray-50 p-2 rounded-xl border border-gray-100 relative"><label className="text-[10px] font-bold text-gray-400 block mb-1">دستور مصرف</label><input className="w-full bg-transparent font-medium text-gray-700 outline-none text-right placeholder-gray-300" placeholder="N=30" value={item.instruction} onFocus={() => { setActiveItemIndex(idx); setSuggestionType('instruction'); }} onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'instruction' ? null : prev); }, 200); }} onChange={e => updateItem(idx, 'instruction', e.target.value)} />{suggestionType === 'instruction' && activeItemIndex === idx && (<div className="absolute bottom-full right-0 left-0 bg-white/95 backdrop-blur-md shadow-2xl p-2 rounded-t-2xl flex gap-2 overflow-x-auto no-scrollbar border-t border-indigo-100 z-50">{getSmartInstructions(item.drug).map(ins => (<button key={ins} onMouseDown={(e) => { e.preventDefault(); selectSuggestedInstruction(ins); }} className="whitespace-nowrap bg-indigo-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black shadow-lg">{ins}</button>))}</div>)}</div></div></div>))}</div>
+                      <div className="space-y-3">{items.map((item, idx) => (<div key={idx} className={`bg-white p-4 rounded-2xl border transition-all duration-500 relative group animate-slide-up ${isRecordingScribe ? 'scribe-glow' : 'border-gray-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)]'}`}><button type="button" onClick={(e) => { e.stopPropagation(); removeItem(idx); }} className="absolute top-4 left-4 z-20 p-2 bg-red-50 text-red-500 rounded-xl active:scale-90 transition-transform"><Trash size={18} /></button><div className="mb-4 pl-12 relative"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">نام دارو</label><input className="w-full font-bold text-gray-800 text-lg border-b border-gray-100 pb-2 outline-none focus:border-indigo-500 placeholder-gray-300" placeholder="مثال: Tab Amoxicillin 500" value={item.drug} onFocus={() => { setActiveItemIndex(idx); setSuggestionType('drug'); setSearchQuery(item.drug); }} onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'drug' ? null : prev); }, 200); }} onChange={e => updateItem(idx, 'drug', e.target.value)} />{suggestionType === 'drug' && activeItemIndex === idx && getDrugSuggestions().length > 0 && (<div className="absolute bottom-full right-0 left-0 bg-white shadow-2xl rounded-2xl border border-gray-200 z-[9999] overflow-hidden mb-2 animate-slide-up flex flex-col-reverse">{getDrugSuggestions().map(d => (<button key={d.id} onMouseDown={(e) => { e.preventDefault(); selectSuggestedDrug(d.name); }} className="w-full text-right p-3 hover:bg-indigo-50 border-b border-gray-50 last:border-0 flex items-center justify-between transition-colors font-bold text-gray-700"><div className="flex items-center gap-3">{getFormIcon(d.name)}<span>{d.name}</span></div><Zap size={14} className="text-amber-500" /></button>))}</div>)}</div><div className="flex gap-3"><div className="flex-1 bg-gray-50 p-2 rounded-xl border border-gray-100 relative"><label className="text-[10px] font-bold text-gray-400 block mb-1">تعداد</label><input className="w-full bg-transparent font-mono text-center font-bold text-gray-700 outline-none placeholder-gray-300" placeholder="N=30" value={item.dosage} onFocus={() => { setActiveItemIndex(idx); setSuggestionType('dosage'); }} onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'dosage' ? null : prev); }, 200); }} onChange={e => updateItem(idx, 'dosage', e.target.value)} />{suggestionType === 'dosage' && activeItemIndex === idx && (<div className="absolute bottom-full right-0 left-0 bg-white/95 backdrop-blur-md shadow-2xl p-2 rounded-t-2xl flex gap-2 overflow-x-auto no-scrollbar border-t border-indigo-100 z-50">{getSmartDosages().map(d => (<button key={d} onMouseDown={(e) => { e.preventDefault(); selectSuggestedDosage(d); }} className="whitespace-nowrap bg-teal-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black shadow-lg">{d}</button>))}</div>)}</div><div className="flex-[2] bg-gray-50 p-2 rounded-xl border border-gray-100 relative"><label className="text-[10px] font-bold text-gray-400 block mb-1">دستور مصرف</label><input className="w-full bg-transparent font-medium text-gray-700 outline-none text-right placeholder-gray-300" placeholder="N=30" value={item.instruction} onFocus={() => { setActiveItemIndex(idx); setSuggestionType('instruction'); }} onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'instruction' ? null : prev); }, 200); }} onChange={e => updateItem(idx, 'instruction', e.target.value)} />{suggestionType === 'instruction' && activeItemIndex === idx && (<div className="absolute bottom-full right-0 left-0 bg-white/95 backdrop-blur-md shadow-2xl p-2 rounded-t-2xl flex gap-2 overflow-x-auto no-scrollbar border-t border-indigo-100 z-50">{getSmartInstructions(item.drug).map(ins => (<button key={ins} onMouseDown={(e) => { e.preventDefault(); selectSuggestedInstruction(ins); }} className="whitespace-nowrap bg-indigo-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-black shadow-lg">{ins}</button>))}</div>)}</div></div></div>))}</div>
                     <button onClick={addItem} className="w-full py-4 border-2 border-dashed border-indigo-200 rounded-2xl text-indigo-500 font-bold flex items-center justify-center gap-2 hover:bg-indigo-50 transition-colors"><Plus size={20} />افزودن قلم داروی جدید</button>
                  </div>
               )}
@@ -1303,20 +1402,120 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
         {/* DESKTOP EDITOR UI */}
         <div className="hidden lg:block min-h-screen">
            <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-[2rem] shadow-sm border border-gray-100">
-             <div className="flex items-center gap-5"><div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600 shadow-inner"><Monitor size={32} /></div><div><h2 className="text-3xl font-black text-gray-800 flex items-center gap-3">کنسول نسخه الکترونیک{isExpressMode && <span className="bg-amber-100 text-amber-700 text-xs font-black px-3 py-1 rounded-full border border-amber-200 animate-pulse flex items-center gap-1"><ZapOff size={14} /> حالت موقت</span>}</h2><p className="text-sm text-gray-400 font-bold uppercase tracking-widest flex items-center gap-2"><User size={14} /> {selectedPatient?.name || 'بدون انتخاب'} • {selectedPatient?.age || '--'} ساله ({selectedPatient?.gender === 'male' ? 'آقا' : (selectedPatient?.gender === 'female' ? 'خانم' : '---')})</p></div></div>
+             <div className="flex items-center gap-5"><div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600 shadow-inner"><Monitor size={32} /></div><div><h2 className="text-3xl font-black text-gray-800 flex items-center gap-3">کنسول نسخه الکترونیک{isExpressMode && <span className="bg-amber-100 text-amber-700 text-xs font-black px-3 py-1 rounded-full border border-amber-200 animate-pulse flex items-center gap-1"><ZapOff size={14} /> حالت موقت</span>}</h2><p className="text-sm text-gray-400 font-bold uppercase tracking-widest flex items-center gap-2"><User size={14} /> {selectedPatient?.name || 'بدون انتخاب'} • {selectedPatient?.age || '--'} ساله</p></div></div>
              <div className="flex gap-2"><button onClick={() => setShowPreferenceModal(true)} className="px-6 py-3 rounded-2xl font-black text-sm flex items-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-100 transition-all shadow-sm"><RotateCw size={20} /> ترجیحات</button><button onClick={() => setShowTemplatesModal(true)} className="px-6 py-3 rounded-2xl font-black text-sm flex items-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-100 transition-all shadow-sm"><List size={20} /> قالب‌ها</button><button onClick={startCamera} disabled={!isOnline} className="px-6 py-3 rounded-2xl font-black text-sm flex items-center gap-2 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-100 transition-all shadow-sm"><Camera size={20} /> اسکن دوربین</button><button onClick={isRecordingScribe ? stopScribeRecording : startScribeRecording} disabled={isProcessingScribe || !isOnline} className={`px-8 py-3 rounded-2xl font-black text-sm flex items-center gap-3 shadow-lg transition-all active:scale-95 ${isRecordingScribe ? 'bg-purple-600 text-white animate-scribe-pulse' : 'bg-purple-100 text-purple-700 hover:bg-purple-200 border border-purple-200'}`}>{isRecordingScribe ? <MicOff size={20} /> : <Mic size={20} />}{isRecordingScribe ? 'ضبط صوت...' : 'کاتب هوشمند'}</button><button onClick={handleAuditSafety} disabled={safetyLoading || items.length === 0} className={`px-6 py-3 rounded-2xl font-black text-sm flex items-center gap-2 shadow-sm transition-all ${isOnline ? (safetyLoading ? 'bg-indigo-50 text-indigo-400' : 'bg-indigo-50 text-indigo-600 animate-safety-pulse') : 'bg-gray-100 text-gray-300 border border-gray-200 cursor-not-allowed'}`}>{safetyLoading ? <Loader2 size={20} className="animate-spin" /> : <ShieldAlert size={20} />}{safetyLoading ? 'پایش AI...' : 'سپر ایمنی'}</button><button onClick={() => setViewMode('landing')} className="p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-red-500 transition-colors"><ArrowLeft size={24} /></button></div>
            </div>
            <div className="flex gap-6 items-start">
-              <div className="w-28 flex flex-col gap-1.5 shrink-0"><div className="bg-indigo-600 text-white p-2 rounded-xl shadow-lg flex items-center justify-center mb-0.5"><Activity size={20} /></div><DesktopVitalSidebarItem label="BP" icon={Activity} color="text-red-500" value={vitals.bloodPressure} unit="mmHg" field="bloodPressure" onChange={handleVitalChange} /><DesktopVitalSidebarItem label="HR" icon={Heart} color="text-rose-500" value={vitals.heartRate} unit="bpm" field="heartRate" onChange={handleVitalChange} /><DesktopVitalSidebarItem label="T" icon={Thermometer} color="text-orange-500" value={vitals.temperature} unit="°C" field="temperature" onChange={handleVitalChange} /><DesktopVitalSidebarItem label="RR" icon={Wind} color="text-cyan-500" value={vitals.respiratoryRate} unit="rpm" field="respiratoryRate" onChange={handleVitalChange} /><DesktopVitalSidebarItem label="BS" icon={Droplet} color="text-pink-500" value={vitals.bloodSugar} unit="mg/dL" field="bloodSugar" onChange={handleVitalChange} /><DesktopVitalSidebarItem label="O2" icon={Wind} color="text-blue-500" value={vitals.spO2} unit="%" field="spO2" onChange={handleVitalChange} /><DesktopVitalSidebarItem label="WT" icon={Scale} color="text-slate-500" value={vitals.weight} unit="kg" field="weight" onChange={handleVitalChange} /></div>
-              <div className="flex-1 flex flex-col gap-6"><div className={`p-4 rounded-[2rem] border transition-all duration-500 shadow-sm ${isRecordingScribe ? 'bg-purple-50/50 scribe-glow border-purple-200' : 'bg-white border-gray-100'}`}><div className="flex items-center justify-between mb-2 px-4"><div className="flex items-center gap-3"><label className="flex items-center gap-2 text-indigo-800 font-black text-xs uppercase tracking-widest"><Activity size={16} /> <span>تشخیص نهایی پزشک متخصص</span></label><div className="flex gap-2"><button onClick={() => setShowComplaintModal(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all ${chiefComplaint ? 'bg-indigo-600 text-white shadow-lg' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}><ListChecks size={14} />{chiefComplaint ? 'شکایات ثبت شد' : 'ثبت شکایات بیمار'}</button><button onClick={() => setShowPreferenceModal(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all"><RotateCw size={14} />مدیریت ترجیحات</button></div></div>{isRecordingScribe && (<div className="flex gap-1 items-end h-4">{[...Array(10)].map((_, i) => <div key={i} className="waveform-bar" style={{ animationDelay: `${i * 0.05}s` }}></div>)}</div>)}</div><input className={`w-full p-4 bg-gray-50/50 border border-transparent focus:border-indigo-100 focus:bg-white rounded-2xl text-xl font-black text-gray-800 outline-none transition-all ${isRecordingScribe ? 'placeholder:italic' : ''}`} placeholder={isRecordingScribe ? "در حال استخراج تشخیص..." : "Working Diagnosis (Differential Diagnosis)..."} value={diagnosis} onChange={e => setDiagnosis(e.target.value)} /></div><div className={`flex-1 bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 min-h-[400px] flex flex-col transition-all duration-500 ${isRecordingScribe ? 'scribe-glow' : ''}`}><table className="w-full text-right border-separate border-spacing-y-4"><thead><tr className="border-b border-gray-50"><th className="pb-4 text-[11px] font-black text-gray-400 uppercase w-10 text-center">#</th><th className="pb-4 text-[11px] font-black text-gray-400 uppercase w-3/5">نام دارو و شکل دارویی (Drug Name, Strength, Form)</th><th className="pb-4 text-[11px] font-black text-gray-400 uppercase w-32 text-center">تعداد (Qty)</th><th className="pb-4 text-[11px] font-black text-gray-400 uppercase">دستور مصرف (Sig)</th><th className="pb-4 w-12"></th></tr></thead><tbody className="divide-y divide-gray-50">{items.map((item, idx) => (
+              <div className="w-28 flex flex-col gap-1.5 shrink-0"><div className="bg-indigo-600 text-white p-2 rounded-xl shadow-lg flex items-center justify-center mb-0.5"><Activity size={20} /></div><DesktopVitalSidebarItem inputRef={vitalRefs.bp} label="BP" icon={Activity} color="text-red-500" value={vitals.bloodPressure} unit="mmHg" field="bloodPressure" onChange={handleVitalChange} onKeyDown={(e: any) => handleVitalKeyDown(e, 'bp')} /><DesktopVitalSidebarItem inputRef={vitalRefs.hr} label="HR" icon={Heart} color="text-rose-500" value={vitals.heartRate} unit="bpm" field="heartRate" onChange={handleVitalChange} onKeyDown={(e: any) => handleVitalKeyDown(e, 'hr')} /><DesktopVitalSidebarItem inputRef={vitalRefs.temp} label="T" icon={Thermometer} color="text-orange-500" value={vitals.temperature} unit="°C" field="temperature" onChange={handleVitalChange} onKeyDown={(e: any) => handleVitalKeyDown(e, 'temp')} /><DesktopVitalSidebarItem inputRef={vitalRefs.rr} label="RR" icon={Wind} color="text-cyan-500" value={vitals.respiratoryRate} unit="rpm" field="respiratoryRate" onChange={handleVitalChange} onKeyDown={(e: any) => handleVitalKeyDown(e, 'rr')} /><DesktopVitalSidebarItem inputRef={vitalRefs.bs} label="BS" icon={Droplet} color="text-pink-500" value={vitals.bloodSugar} unit="mg/dL" field="bloodSugar" onChange={handleVitalChange} onKeyDown={(e: any) => handleVitalKeyDown(e, 'bs')} /><DesktopVitalSidebarItem label="O2" icon={Wind} color="text-blue-500" value={vitals.spO2} unit="%" field="spO2" onChange={handleVitalChange} /><DesktopVitalSidebarItem inputRef={vitalRefs.weight} label="WT" icon={Scale} color="text-slate-500" value={vitals.weight} unit="kg" field="weight" onChange={handleVitalChange} /></div>
+              <div className="flex-1 flex flex-col gap-6">
+                
+                {/* DYNAMIC DIAGNOSIS / IDENTITY CARD */}
+                <div className={`p-4 rounded-[2rem] border transition-all duration-500 shadow-sm ${isRecordingScribe ? 'bg-purple-50/50 scribe-glow border-purple-200' : 'bg-white border-gray-100'}`}>
+                   {isExpressMode ? (
+                      <div className="animate-fade-in flex items-center gap-6 px-4 h-16">
+                         {/* One Row Integrated Identity Bar */}
+                         <div className="flex-[4] relative">
+                            <input 
+                               ref={patientNameRef}
+                               className="w-full ghost-input text-2xl font-black text-gray-800 placeholder-gray-200 py-1" 
+                               placeholder="نام بیمار (Patient Name)..." 
+                               value={selectedPatient?.name || ''} 
+                               onKeyDown={(e) => {
+                                 if (e.key === 'Enter') { e.preventDefault(); ageRef.current?.focus(); }
+                               }}
+                               onChange={e => {
+                                 const val = smartCapitalize(e.target.value);
+                                 setSelectedPatient(p => p ? ({ ...p, name: val }) : null);
+                               }}
+                            />
+                         </div>
+                         <div className="w-16 relative">
+                            <input 
+                               ref={ageRef}
+                               className="w-full ghost-input text-2xl font-black text-gray-800 text-center placeholder-gray-200 py-1" 
+                               placeholder="سن" 
+                               value={selectedPatient?.age || ''} 
+                               onKeyDown={(e) => {
+                                 if (e.key === 'Enter') { e.preventDefault(); weightRef.current?.focus(); }
+                               }}
+                               onChange={e => setSelectedPatient(p => p ? ({ ...p, age: e.target.value }) : null)}
+                            />
+                         </div>
+                         <div className="w-20 relative">
+                            <input 
+                               ref={weightRef}
+                               className="w-full ghost-input text-2xl font-black text-indigo-600 text-center placeholder-gray-200 py-1" 
+                               placeholder="وزن" 
+                               value={vitals.weight} 
+                               onKeyDown={(e) => {
+                                 if (e.key === 'Enter') { e.preventDefault(); diagnosisRef.current?.focus(); }
+                               }}
+                               onChange={e => handleVitalChange('weight', e.target.value)} 
+                            />
+                         </div>
+                         
+                         <div className="w-px h-10 bg-gray-100 self-center"></div>
+
+                         {/* Compressed Diagnosis & CC Integrated */}
+                         <div className="flex-[3] flex items-center gap-3">
+                            <div className="flex-1">
+                               <input 
+                                  ref={diagnosisRef}
+                                  maxLength={40}
+                                  className="w-full ghost-input text-lg font-black text-gray-700 placeholder-gray-200 py-1" 
+                                  placeholder="تشخیص نهایی (Impression)..." 
+                                  value={diagnosis} 
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') { 
+                                      e.preventDefault(); 
+                                      if (items.length === 0) addItem();
+                                      autoFocusNewItem.current = true;
+                                    }
+                                  }}
+                                  onChange={e => setDiagnosis(e.target.value)}
+                               />
+                            </div>
+                            <button 
+                              onClick={() => setShowComplaintModal(true)} 
+                              title="ثبت شکایات بیمار"
+                              className={`p-2 rounded-xl transition-all ${chiefComplaint ? 'bg-indigo-600 text-white shadow-lg' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100'}`}
+                            >
+                              <ListChecks size={20} />
+                            </button>
+                         </div>
+                         
+                         {isRecordingScribe && (<div className="flex gap-1 items-end h-6">{[...Array(8)].map((_, i) => <div key={i} className="waveform-bar" style={{ animationDelay: `${i * 0.05}s` }}></div>)}</div>)}
+                      </div>
+                   ) : (
+                      <div className="animate-fade-in p-2">
+                         <div className="flex items-center justify-between mb-2 px-4">
+                            <div className="flex items-center gap-3">
+                               <label className="flex items-center gap-2 text-indigo-800 font-black text-xs uppercase tracking-widest"><Activity size={16} /> <span>تشخیص نهایی پزشک متخصص</span></label>
+                               <div className="flex gap-2">
+                                  <button onClick={() => setShowComplaintModal(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all ${chiefComplaint ? 'bg-indigo-600 text-white shadow-lg' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}><ListChecks size={14} />{chiefComplaint ? 'شکایات ثبت شد' : 'ثبت شکایات بیمار'}</button>
+                                  <button onClick={() => setShowPreferenceModal(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all"><RotateCw size={14} />مدیریت ترجیحات</button>
+                               </div>
+                            </div>
+                            {isRecordingScribe && (<div className="flex gap-1 items-end h-4">{[...Array(10)].map((_, i) => <div key={i} className="waveform-bar" style={{ animationDelay: `${i * 0.05}s` }}></div>)}</div>)}
+                         </div>
+                         <input className={`w-full p-4 bg-gray-50/50 border border-transparent focus:border-indigo-100 focus:bg-white rounded-2xl text-xl font-black text-gray-800 outline-none transition-all ${isRecordingScribe ? 'placeholder:italic' : ''}`} placeholder={isRecordingScribe ? "در حال استخراج تشخیص..." : "Working Diagnosis (Differential Diagnosis)..."} value={diagnosis} onChange={e => setDiagnosis(e.target.value)} />
+                      </div>
+                   )}
+                </div>
+
+                <div className={`flex-1 bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 min-h-[400px] flex flex-col transition-all duration-500 ${isRecordingScribe ? 'scribe-glow' : ''}`}><table className="w-full text-right border-separate border-spacing-y-4"><thead><tr className="border-b border-gray-50"><th className="pb-4 text-[11px] font-black text-gray-400 uppercase w-10 text-center">#</th><th className="pb-4 text-[11px] font-black text-gray-400 uppercase w-3/5">نام دارو و شکل دارویی (Drug Name, Strength, Form)</th><th className="pb-4 text-[11px] font-black text-gray-400 uppercase w-32 text-center">تعداد (Qty)</th><th className="pb-4 text-[11px] font-black text-gray-400 uppercase">دستور مصرف (Sig)</th><th className="pb-4 w-12"></th></tr></thead><tbody className="divide-y divide-gray-50">{items.map((item, idx) => (
                 <tr key={idx} className="group hover:bg-indigo-50/20 transition-all rounded-2xl overflow-hidden">
                   <td className="py-2 text-gray-400 text-sm font-black text-center">{idx + 1}</td>
                   <td className="py-2 px-2 relative">
                     <input 
+                      ref={el => { if (!itemRefs.current[idx]) itemRefs.current[idx] = {}; itemRefs.current[idx].drug = el; }}
                       className="w-full p-4 bg-transparent focus:bg-white focus:shadow-lg rounded-2xl outline-none font-black text-gray-800 text-xl transition-all border border-transparent focus:border-indigo-100 placeholder-gray-300" 
                       value={item.drug} 
                       onFocus={() => { setActiveItemIndex(idx); setSuggestionType('drug'); setSearchQuery(item.drug); }} 
                       onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'drug' ? null : prev); }, 200); }} 
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); itemRefs.current[idx].dosage?.focus(); }
+                      }}
                       onChange={e => updateItem(idx, 'drug', e.target.value)} 
                       placeholder="مثال: Tab Amoxicillin 500" 
                     />
@@ -1333,10 +1532,14 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
                   </td>
                   <td className="py-2 px-2 relative">
                     <input 
+                      ref={el => { if (!itemRefs.current[idx]) itemRefs.current[idx] = {}; itemRefs.current[idx].dosage = el; }}
                       className="w-full p-4 bg-transparent focus:bg-white focus:shadow-lg rounded-2xl outline-none font-black text-lg text-indigo-700 transition-all font-mono border border-transparent focus:border-indigo-100 text-center placeholder-gray-200" 
                       value={item.dosage} 
                       onFocus={() => { setActiveItemIndex(idx); setSuggestionType('dosage'); }} 
                       onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'dosage' ? null : prev); }, 200); }} 
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); itemRefs.current[idx].instruction?.focus(); }
+                      }}
                       onChange={e => updateItem(idx, 'dosage', e.target.value)} 
                       placeholder="N=30" 
                     />
@@ -1351,10 +1554,18 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
                   </td>
                   <td className="py-2 px-2 relative">
                     <input 
+                      ref={el => { if (!itemRefs.current[idx]) itemRefs.current[idx] = {}; itemRefs.current[idx].instruction = el; }}
                       className="w-full p-4 bg-transparent focus:bg-white focus:shadow-lg rounded-2xl outline-none font-bold text-lg text-gray-600 text-right transition-all border border-transparent focus:border-indigo-100 placeholder-gray-200" 
                       value={item.instruction} 
                       onFocus={() => { setActiveItemIndex(idx); setSuggestionType('instruction'); }} 
                       onBlur={() => { setTimeout(() => { setSuggestionType(prev => prev === 'instruction' ? null : prev); }, 200); }} 
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { 
+                          e.preventDefault(); 
+                          addItem(); 
+                          autoFocusNewItem.current = true;
+                        }
+                      }}
                       onChange={e => updateItem(idx, 'instruction', e.target.value)} 
                       placeholder="N=30" 
                     />
@@ -1371,443 +1582,10 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
                     <button onClick={() => removeItem(idx)} className="text-gray-300 hover:text-red-500 transition-colors p-3 rounded-2xl hover:bg-red-50"><Trash size={22} /></button>
                   </td>
                 </tr>
-              ))}</tbody></table><button onClick={addItem} className="mt-8 text-indigo-600 font-black text-sm flex items-center gap-3 hover:bg-indigo-50 px-8 py-4 rounded-[1.5rem] transition-all border-2 border-dashed border-indigo-100 self-start"><Plus size={24} /> افزودن قلم داروی جدید</button><div className="mt-12 pt-10 border-t border-gray-50 flex justify-end gap-5 pb-10"><button onClick={() => setShowSaveModal(true)} disabled={items.length === 0} className="px-10 py-5 rounded-[1.5rem] font-black text-lg text-gray-600 bg-gray-100 hover:bg-gray-200 flex items-center gap-3 transition-all active:scale-95 disabled:opacity-50 shadow-sm"><Save size={26} /> ذخیره در قالب‌ها</button><button onClick={handleAutoPrint} disabled={items.length === 0} className="px-16 py-5 rounded-[1.5rem] font-black text-lg text-white bg-indigo-600 shadow-2xl shadow-indigo-200 hover:bg-indigo-700 flex items-center justify-center gap-3 transition-all active:scale-95 disabled:opacity-50"><Printer size={26} />{printButtonLabel}</button></div></div></div>
+              ))}</tbody></table><button onClick={addItem} className="mt-8 text-indigo-600 font-black text-sm flex items-center gap-3 hover:bg-indigo-50 px-8 py-4 rounded-[1.5rem] transition-all border-2 border-dashed border-indigo-100 self-start"><Plus size={24} /> افزودن قلم داروی جدید</button><div className="mt-12 pt-10 border-t border-gray-50 flex justify-end gap-5 pb-10"><button onClick={handleNextPatient} className="px-10 py-5 rounded-[1.5rem] font-black text-lg text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-100 flex items-center gap-3 transition-all active:scale-95 shadow-sm"><UserPlus size={26} /> بیمار بعدی</button><button onClick={() => setShowSaveModal(true)} disabled={items.length === 0} className="px-10 py-5 rounded-[1.5rem] font-black text-lg text-gray-600 bg-gray-100 hover:bg-gray-200 flex items-center gap-3 transition-all active:scale-95 disabled:opacity-50 shadow-sm"><Save size={26} /> ذخیره در قالب‌ها</button><button onClick={handleAutoPrint} disabled={items.length === 0} className="px-16 py-5 rounded-[1.5rem] font-black text-lg text-white bg-indigo-600 shadow-2xl shadow-indigo-200 hover:bg-indigo-700 flex items-center justify-center gap-3 transition-all active:scale-95 disabled:opacity-50"><Printer size={26} />{printButtonLabel}</button></div></div></div>
            </div>
         </div>
         </>
-      )}
-
-      {/* SHARED OVERLAYS / MODALS */}
-      {showNewPatientModal && (
-          <div className="fixed inset-0 z-[100] lg:bg-black/60 lg:backdrop-blur-sm flex items-end lg:items-center justify-center p-0 lg:p-4">
-             <div className="bg-white w-full lg:max-w-lg h-[100dvh] lg:h-auto lg:rounded-3xl shadow-2xl relative animate-slide-up lg:animate-fade-in flex flex-col">
-                <div className="p-4 lg:p-6 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white z-10 lg:rounded-t-3xl"><h3 className="text-xl lg:text-2xl font-bold text-gray-800 flex items-center gap-2"><div className="bg-teal-100 p-2 rounded-xl text-teal-600"><UserPlus size={24} /></div>ثبت بیمار جدید</h3><button onClick={() => setShowNewPatientModal(false)} className="p-2 bg-gray-50 rounded-full text-gray-500 hover:bg-gray-100 hover:text-red-500 transition-colors"><X size={20} /></button></div>
-                <div className="flex-1 overflow-y-auto p-5 lg:p-8 space-y-5">
-                   <div><label className="block text-sm font-bold text-gray-600 mb-2">نام و نام خانوادگی</label><div className="relative"><User className="absolute right-3 top-3.5 text-gray-400" size={18} /><input autoFocus className="w-full p-3.5 pr-10 bg-gray-50 rounded-xl outline-none focus:ring-2 focus:ring-teal-50 transition-all border border-gray-100" placeholder="مثال: علی رضایی" value={newPatientName} onChange={e => setNewPatientName(e.target.value)} /></div></div>
-                   <div><label className="block text-sm font-bold text-gray-600 mb-2">شماره تماس</label><div className="relative"><input type="tel" className="w-full p-3.5 pl-10 bg-gray-50 rounded-xl outline-none focus:ring-2 focus:ring-teal-50 transition-all text-left border border-gray-100 font-mono" placeholder="0912..." value={newPatientPhone} onChange={e => setNewPatientPhone(e.target.value)} dir="ltr" /><Phone className="absolute left-3 top-3.5 text-gray-400" size={18} /></div></div>
-                   <div className="flex gap-4"><div className="flex-1"><label className="block text-sm font-bold text-gray-600 mb-2">سن</label><input type="text" className="w-full p-3.5 bg-gray-50 rounded-xl outline-none focus:ring-2 focus:ring-teal-50 text-center border border-gray-100 font-bold" value={newPatientAge} onChange={e => setNewPatientAge(e.target.value)} placeholder="" /></div><div className="flex-[1.5]"><label className="block text-sm font-bold text-gray-600 mb-2">جنسیت</label><div className="flex bg-gray-50 p-1 rounded-xl border border-gray-100"><button onClick={() => setNewPatientGender('male')} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${newPatientGender === 'male' ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`}>آقا</button><button onClick={() => setNewPatientGender('female')} className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition-all ${newPatientGender === 'female' ? 'bg-white shadow text-pink-600' : 'text-gray-400'}`}>خانم</button></div></div></div>
-                   <div><label className="block text-sm font-bold text-gray-600 mb-2">وزن</label><div className="relative"><input type="text" className="w-full p-3.5 bg-gray-50 rounded-xl outline-none focus:ring-2 focus:ring-teal-50 text-center border border-gray-100 font-bold" placeholder="" value={newPatientWeight} onChange={e => setNewPatientWeight(e.target.value)} /><Scale className="absolute left-3 top-3.5 text-gray-400" size={18} /></div></div>
-                   <div className="pt-2"><label className="flex items-center gap-2 text-sm font-bold text-orange-600 mb-2"><Activity size={16} />سابقه بیماری</label><input className="w-full p-3.5 bg-orange-50/30 border border-orange-100 rounded-xl outline-none focus:ring-2 focus:ring-orange-200" placeholder="دیابت، فشار خون و..." value={newPatientHistory} onChange={e => setNewPatientHistory(e.target.value)} /></div>
-                   <div><label className="flex items-center gap-2 text-sm font-bold text-red-600 mb-2"><AlertCircle size={16} />حساسیت‌ها و آلرژی</label><input className="w-full p-3.5 bg-red-50/30 border border-red-100 rounded-xl outline-none focus:ring-2 focus:ring-red-200" placeholder="پنی‌سیلین، آسپرین..." value={newPatientAllergies} onChange={e => setNewPatientAllergies(e.target.value)} /></div>
-                </div>
-                <div className="p-4 lg:p-6 border-t border-gray-100 bg-white lg:rounded-b-3xl"><button onClick={handleRegisterPatient} disabled={!newPatientName} className="w-full bg-gradient-to-r from-teal-600 to-teal-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-teal-200 flex items-center justify-center gap-3 text-lg"><Save size={22} />ذخیره پرونده اولیه</button></div>
-             </div>
-          </div>
-      )}
-
-      {showQuickEntryModal && (
-          <div className="fixed inset-0 z-[100] bg-white/10 backdrop-blur-xl flex items-center justify-center p-4">
-             <div className="bg-white/80 backdrop-blur-md w-full max-w-md rounded-[2.5rem] shadow-2xl border border-white/50 p-8 lg:p-10 animate-fade-in relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 opacity-5"><User size={120} /></div>
-                <div className="flex justify-between items-center mb-8 relative z-10"><div><h3 className="text-2xl font-black text-gray-800 flex items-center gap-2"><Zap className="text-teal-600" /> نسخه سریع</h3><p className="text-xs text-gray-500 font-bold mt-1">نشست موقت - بدون ثبت در بایگانی</p></div><button onClick={() => { setShowQuickEntryModal(false); clearFormStates(); }} className="p-2 bg-gray-100 rounded-full text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all"><X size={20}/></button></div>
-                <div className="space-y-5 relative z-10">
-                   <div className="space-y-1"><label className="text-xs font-black text-teal-600 mr-1">نام بیمار (اختیاری)</label><input autoFocus className="w-full p-4 bg-white/50 border border-gray-100 rounded-2xl outline-none focus:ring-4 focus:ring-teal-100 font-bold shadow-sm" placeholder="" value={newPatientName} onChange={e => setNewPatientName(e.target.value)} /></div>
-                   <div className="grid grid-cols-2 gap-4"><div className="space-y-1"><label className="text-xs font-black text-teal-600 mr-1">سن</label><input type="text" className="w-full p-4 bg-white/50 border border-gray-100 rounded-2xl outline-none focus:ring-4 focus:ring-teal-100 font-bold text-center" placeholder="" value={newPatientAge} onChange={e => setNewPatientAge(e.target.value)} /></div><div className="space-y-1"><label className="text-xs font-black text-teal-600 mr-1">وزن</label><input type="text" className="w-full p-4 bg-white/50 border border-gray-100 rounded-2xl outline-none focus:ring-4 focus:ring-teal-100 font-bold text-center" placeholder="" value={newPatientWeight} onChange={e => setNewPatientWeight(e.target.value)} /></div></div>
-                   <div className="space-y-1"><label className="text-xs font-black text-teal-600 mr-1">جنسیت</label><div className="flex bg-gray-100/50 p-1.5 rounded-2xl"><button onClick={() => setNewPatientGender('male')} className={`flex-1 py-3 rounded-xl text-sm font-black transition-all ${newPatientGender === 'male' ? 'bg-white shadow-md text-blue-600' : 'text-gray-400'}`}>آقا</button><button onClick={() => setNewPatientGender('female')} className={`flex-1 py-3 rounded-xl text-sm font-black transition-all ${newPatientGender === 'female' ? 'bg-white shadow-md text-pink-600' : 'text-gray-400'}`}>خانم</button></div></div>
-                   <button onClick={handleQuickEntry} className="w-full bg-teal-600 text-white py-5 rounded-[1.5rem] font-black shadow-xl shadow-teal-200 mt-4 flex items-center justify-center gap-3 text-lg hover:bg-teal-700 transition-all active:scale-95"><FileSignature size={24} /> شروع نسخه‌نویسی</button>
-                </div>
-             </div>
-          </div>
-      )}
-
-      {showPreferenceModal && (
-          <div className="fixed inset-0 z-[210] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
-              <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden animate-slide-up flex flex-col h-[80vh]">
-                  <div className="p-8 border-b border-gray-100 bg-gray-50 flex justify-between items-center"><div className="flex items-center gap-3"><div className="bg-indigo-600 p-2 rounded-xl text-white shadow-lg"><RotateCw size={24} /></div><div><h3 className="text-2xl font-black text-gray-800">مدیریت ترجیحات نسخه‌نویسی</h3><p className="text-xs text-gray-500 font-bold mt-1">شخصی‌سازی دوزها و دستورات مصرف متداول</p></div></div><button onClick={() => setShowPreferenceModal(false)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"><X size={24} /></button></div>
-                  <div className="flex-1 overflow-y-auto p-8 grid grid-cols-1 md:grid-cols-2 gap-10 custom-scrollbar"><div className="space-y-6"><h4 className="font-black text-teal-600 flex items-center gap-2 text-sm uppercase tracking-widest border-b border-teal-100 pb-2"><Hash size={18} /> مقادیر و دوزها (Qty)</h4><div className="flex gap-2"><input className="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-teal-100 font-bold text-sm" placeholder="مثلاً N=20" value={newPrefValue} onChange={e => setNewPrefValue(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleAddPreference('dosage')} /><button onClick={() => handleAddPreference('dosage')} className="bg-teal-600 text-white p-3 rounded-xl shadow-lg shadow-teal-100 hover:bg-teal-700 transition-all"><Plus size={20}/></button></div><div className="space-y-2">{customDosages.length === 0 ? (<p className="text-center text-xs text-gray-400 py-10">موردی ثبت نشده</p>) : (customDosages.map(v => (<div key={v} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100 group"><span className="font-black text-gray-700">{v}</span><button onClick={() => handleRemovePreference('dosage', v)} className="text-gray-300 hover:text-red-500 p-1"><X size={16}/></button></div>)))}</div></div><div className="space-y-6"><h4 className="font-black text-indigo-600 flex items-center gap-2 text-sm uppercase tracking-widest border-b border-indigo-100 pb-2"><FileText size={18} /> دستورات مصرف (Sig)</h4><div className="flex gap-2"><input className="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-100 font-bold text-sm" placeholder="مثلاً قبل از خواب" value={newPrefValue} onChange={e => setNewPrefValue(e.target.value)} onKeyPress={e => e.key === 'Enter' && handleAddPreference('instruction')} /><button onClick={() => handleAddPreference('instruction')} className="bg-indigo-600 text-white p-3 rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all"><Plus size={20}/></button></div><div className="space-y-2">{customInstructions.length === 0 ? (<p className="text-center text-xs text-gray-400 py-10">موردی ثبت نشده</p>) : (customInstructions.map(v => (<div key={v} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100 group"><span className="font-bold text-gray-700 text-xs">{v}</span><button onClick={() => handleRemovePreference('instruction', v)} className="text-gray-300 hover:text-red-500 p-1"><X size={16}/></button></div>)))}</div></div></div>
-                  <div className="p-6 bg-gray-50 border-t border-gray-100 text-center"><button onClick={() => setShowPreferenceModal(false)} className="px-12 py-3 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-200 hover:bg-indigo-700 transition-all">تایید و بستن</button></div>
-              </div>
-          </div>
-      )}
-
-      {showComplaintModal && (
-          <div className="fixed inset-0 z-[195] bg-black/50 backdrop-blur-md flex items-center justify-center p-4">
-              <div className="bg-white w-full max-xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-slide-up flex flex-col relative"><div className="p-8 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center"><div className="flex items-center gap-3"><div className="bg-indigo-100 p-2 rounded-xl text-indigo-600"><ListChecks size={24} /></div><h3 className="text-2xl font-black text-gray-800">شکایات اصلی بیمار (CC)</h3><div className="relative"><button onClick={() => setShowComplaintTemplateMenu(!showComplaintTemplateMenu)} className={`p-2 rounded-xl transition-all ${showComplaintTemplateMenu ? 'bg-indigo-600 text-white shadow-md' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`} title="قالب‌های شکایات"><LayoutTemplate size={20} /></button>{showComplaintTemplateMenu && (<div className="absolute top-full left-1/2 -translate-x-1/2 mt-3 w-80 bg-white shadow-[0_15px_50px_rgba(0,0,0,0.15)] rounded-2xl border border-gray-100 z-[220] overflow-hidden animate-slide-down"><div className="p-3 bg-indigo-50 border-b border-gray-100 text-[10px] font-black uppercase text-indigo-400 text-center">لیست قالب‌های شکایات</div><div className="max-h-64 overflow-y-auto custom-scrollbar bg-white">{complaintTemplates.length === 0 ? (<div className="p-6 text-center text-xs text-gray-400 font-bold">هنوز قالبی ذخیره نکرده‌اید</div>) : (complaintTemplates.map(t => (<div key={t.id} className="flex items-center justify-between p-4 hover:bg-indigo-50 border-b border-gray-50 last:border-0 group cursor-pointer transition-colors" onClick={() => selectComplaintTemplate(t.text)}><span className="text-xs font-black text-gray-700 truncate flex-1 leading-relaxed">{t.text}</span><button onClick={(e) => { e.stopPropagation(); handleDeleteComplaintTemplate(t.id); }} className="p-2 text-gray-300 hover:text-red-500 transition-all ml-2"><Trash size={16} /></button></div>)))}</div></div>)}</div></div><button onClick={() => { stopCCRecording(); setShowComplaintModal(false); setShowComplaintTemplateMenu(false); }} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"><X size={24} /></button></div><div className="p-8 space-y-6"><div className="relative"><textarea autoFocus className="w-full p-6 bg-gray-50 border border-gray-200 rounded-3xl outline-none focus:ring-4 focus:ring-indigo-100 font-bold text-gray-700 h-64 resize-none leading-relaxed text-lg" placeholder="شکایات و علائم اصلی بیمار را اینجا بنویسید یا دیکته کنید..." value={chiefComplaint} onChange={e => setChiefComplaint(e.target.value)} /><div className="absolute bottom-4 left-4 flex gap-2"><button onClick={handleSaveComplaintTemplate} disabled={!chiefComplaint.trim()} className="p-4 bg-white text-indigo-600 border border-indigo-100 rounded-2xl shadow-lg hover:bg-indigo-50 transition-all active:scale-95 disabled:opacity-50" title="ذخیره به عنوان قالب جدید"><BookmarkPlus size={24} /></button><button onClick={isRecordingCC ? stopCCRecording : startCCRecording} className={`p-4 rounded-2xl shadow-lg transition-all active:scale-95 ${isRecordingCC ? 'bg-red-600 text-white animate-pulse' : 'bg-white text-indigo-600 border border-indigo-100 hover:bg-indigo-50'}`} title="دیکته صوتی شکایات">{isProcessingCC ? <Loader2 size={24} className="animate-spin" /> : isRecordingCC ? <MicOff size={24} /> : <Mic size={24} />}</button></div></div><div className="flex gap-4"><button onClick={() => { setChiefComplaint(''); }} className="px-8 py-4 rounded-2xl font-black text-sm text-red-600 bg-red-50 hover:bg-red-100 transition-all">پاک‌سازی</button><button onClick={() => { setShowComplaintModal(false); setShowComplaintTemplateMenu(false); }} className="flex-1 bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-xl shadow-indigo-200 hover:bg-indigo-700 transition-all text-lg">ثبت و تایید شکایات</button></div></div></div>
-          </div>
-      )}
-
-      {showTemplatesModal && (
-         <div className="fixed inset-0 z-[190] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden animate-slide-up flex flex-col h-[70vh]"><div className="p-8 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center"><div className="flex items-center gap-3"><div className="bg-indigo-100 p-2 rounded-xl text-indigo-600"><LayoutTemplate size={24} /></div><h3 className="text-2xl font-black text-gray-800">قالب‌های نسخه آماده</h3></div><button onClick={() => setShowTemplatesModal(false)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"><X size={24} /></button></div><div className="p-6"><div className="relative mb-4"><Search className="absolute right-4 top-4 text-gray-400" /><input className="w-full p-4 pr-12 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-50 font-bold" placeholder="جستجوی عنوان قالب (سرماخوردگی، میگرن...)" value={templateSearch} onChange={e => setTemplateSearch(e.target.value)} /></div></div><div className="flex-1 overflow-y-auto px-6 pb-8 space-y-3 custom-scrollbar">{templates.filter(t => t.name.includes(templateSearch)).length === 0 ? (<div className="text-center py-20 text-gray-400 font-bold">قالبی مطابق با جستجوی شما یافت نشد</div>) : (templates.filter(t => t.name.includes(templateSearch)).map(t => (<div key={t.id} className="flex justify-between items-center p-5 bg-white border border-gray-100 rounded-3xl hover:border-indigo-400 hover:shadow-xl transition-all group cursor-pointer" onClick={() => loadTemplate(t)}><div className="flex items-center gap-4"><div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-all"><FileText size={24} /></div><div><p className="font-black text-lg text-gray-800">{t.name}</p><p className="text-xs text-gray-400 font-bold mt-1">{t.items.length} قلم دارو در این قالب</p></div></div><div className="flex items-center gap-2"><button onClick={(e) => { e.stopPropagation(); handleDeleteTemplate(t.id); }} className="p-3 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl opacity-0 group-hover:opacity-100 transition-all"><Trash size={20} /></button><div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-gray-300 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-all"><ChevronRight size={20} /></div></div></div>)))}</div></div>
-         </div>
-      )}
-
-      {showCamera && (
-        <div className="fixed inset-0 z-[150] bg-black flex flex-col">
-          <div className="flex justify-between items-center p-4 bg-black/50 text-white absolute top-0 left-0 right-0 z-10"><h3 className="font-bold text-lg flex items-center gap-2"><ScanLine /> اسکن نسخه</h3><button onClick={stopCamera} className="p-2 bg-white/20 rounded-full hover:bg-white/30 transition-colors"><X /></button></div>
-          <div className="flex-1 relative flex items-center justify-center bg-black overflow-hidden"><video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain" /><canvas ref={canvasRef} className="hidden" /></div>
-          <div className="bg-black p-6 pb-12 flex justify-center items-center">
-            <button 
-              onClick={capturePhoto} 
-              className="w-20 h-20 rounded-full bg-white border-4 border-gray-300 flex items-center justify-center shadow-lg active:scale-90 transition-transform"
-            >
-              <div className="w-16 h-16 rounded-full bg-white border-2 border-black/10"></div>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showMobileRestrictModal && (
-         <div className="fixed inset-0 z-[500] bg-black/60 backdrop-blur-md flex items-center justify-center p-6">
-            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-10 text-center shadow-2xl animate-bounce-in">
-               <div className="w-20 h-20 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <MonitorOff size={40} />
-               </div>
-               <h3 className="text-xl font-black text-gray-800 mb-4 tracking-tight">بهینه‌سازی نمایشگر</h3>
-               <p className="text-gray-500 leading-relaxed font-bold text-sm mb-10">
-                  پزشک گرامی، قابلیت نگارش دیجیتال و استفاده از قلم، برای دقت بالاتر در نمایشگرهای بزرگ (رایانه یا تبلت) بهینه‌سازی شده است. لطفاً از نسخه دسکتاپ استفاده فرمایید.
-               </p>
-               <button onClick={() => setShowMobileRestrictModal(false)} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black shadow-lg shadow-indigo-100">متوجه شدم</button>
-            </div>
-         </div>
-      )}
-
-      {showDigitalPad && (
-        <div className="fixed inset-0 z-[420] bg-gray-950 flex flex-col overflow-hidden animate-fade-in"
-             onMouseMove={handleToolbarMove} onTouchMove={handleToolbarMove}
-             onMouseUp={handleToolbarEnd} onTouchEnd={handleToolbarEnd}>
-           
-           <div 
-              style={{ 
-                left: padToolbarPos.x,
-                top: padToolbarPos.y,
-                transform: `rotate(${padRotation}deg)`,
-                zIndex: 450
-              }}
-              className={`fixed satellite-bar p-1.5 lg:p-2 flex items-center gap-1.5 lg:gap-3 touch-none shadow-[0_0_50px_rgba(0,0,0,0.3)] ${padRotation % 180 === 90 ? 'flex-row' : 'flex-col'}`}
-           >
-              <div onMouseDown={handleToolbarStart} onTouchStart={handleToolbarStart} className="p-1 lg:p-2 text-gray-300 cursor-move hover:text-indigo-400">
-                 <GripVertical size={20} />
-              </div>
-              
-              <button onPointerDown={(e) => { e.stopPropagation(); setShowDigitalPad(false); }} className="p-2 lg:p-3 text-gray-400 hover:text-red-500 bg-gray-50 rounded-2xl transition-all">
-                <X size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-              </button>
-
-              <div className={`${padRotation % 180 === 90 ? 'w-[1px] h-6' : 'w-6 h-[1px]'} bg-gray-200`}></div>
-
-              <div className={`flex gap-1.5 p-1 bg-gray-50 rounded-2xl shadow-inner relative ${padRotation % 180 === 90 ? 'flex-row' : 'flex-col'}`}>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setShowPadSearch(!showPadSearch); }} className={`p-2 lg:p-3 rounded-xl transition-all ${showPadSearch ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400'}`}>
-                    <Search size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-                 </button>
-                 
-                 {showPadSearch && (
-                    <div className="absolute left-0 top-full mt-3 flex flex-col gap-2 pointer-events-auto">
-                        {padSearchTerm && padFilteredPatients.length > 0 && (
-                            <div className="pad-search-results">
-                                {padFilteredPatients.map(p => (
-                                    <button key={p.id} onClick={() => handleSelectPatient(p)} className="w-full p-4 text-right hover:bg-indigo-50 border-b border-gray-50 last:border-0 flex justify-between items-center transition-colors">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 font-bold text-xs">{p.displayId}</div>
-                                            <span className="font-bold text-sm text-gray-700">{p.name}</span>
-                                        </div>
-                                        <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded text-gray-400">#{p.displayId}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                        <div className="pad-search-glass">
-                            <input 
-                                autoFocus
-                                className="w-full bg-transparent outline-none font-bold text-gray-700 text-sm placeholder-indigo-300"
-                                placeholder="نام یا کد (001)..."
-                                value={padSearchTerm}
-                                onChange={e => setPadSearchTerm(e.target.value)}
-                            />
-                        </div>
-                    </div>
-                 )}
-
-                 <button onPointerDown={(e) => { e.stopPropagation(); setIsNewPatientPadMode(!isNewPatientPadMode); if(!isNewPatientPadMode) resetPadForNewPatient(); }} className={`p-2 lg:p-3 rounded-xl transition-all ${isNewPatientPadMode ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-indigo-600'}`}>
-                    <UserPlus size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-                 </button>
-              </div>
-
-              <div className={`${padRotation % 180 === 90 ? 'w-[1px] h-6' : 'w-6 h-[1px]'} bg-gray-200`}></div>
-
-              <div className={`flex gap-1 ${padRotation % 180 === 90 ? 'flex-row' : 'flex-col'}`}>
-                 <button onPointerDown={(e) => { e.stopPropagation(); undoPad(); }} disabled={padHistory.length <= 1} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 disabled:opacity-20 transition-all">
-                    <RotateCcw size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-                 </button>
-                 <button onPointerDown={(e) => { e.stopPropagation(); clearPad(); }} className="p-2 lg:p-3 text-red-400 hover:text-red-600 transition-all">
-                    <Trash size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-                 </button>
-              </div>
-
-              <div className={`${padRotation % 180 === 90 ? 'w-[1px] h-6' : 'w-6 h-[1px]'} bg-gray-200`}></div>
-
-              <div className={`flex gap-1.5 p-1 bg-gray-50 rounded-2xl shadow-inner ${padRotation % 180 === 90 ? 'flex-row' : 'flex-col'}`}>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadTool(prev => prev === 'pen' ? 'idle' : 'pen'); triggerSettingsDisplay(); }} className={`p-2 lg:p-3 rounded-xl transition-all ${padTool === 'pen' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}>
-                    <PenTool size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-                 </button>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadTool(prev => prev === 'eraser' ? 'idle' : 'eraser'); triggerSettingsDisplay(); }} className={`p-2 lg:p-3 rounded-xl transition-all ${padTool === 'eraser' ? 'bg-white text-red-500 shadow-sm' : 'text-gray-400'}`}>
-                    <Eraser size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-                 </button>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadTool(prev => prev === 'type' ? 'idle' : 'type'); triggerSettingsDisplay(); }} className={`p-2 lg:p-3 rounded-xl transition-all ${padTool === 'type' ? 'tool-active-glow' : 'text-gray-400'}`}>
-                    <Type size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-                 </button>
-                 {padTool === 'type' && (
-                    <button onPointerDown={(e) => { e.stopPropagation(); handleAutoPrint(); }} className="p-2 lg:p-3 rounded-xl transition-all bg-indigo-600 text-white shadow-lg animate-pulse-subtle">
-                       <Printer size={18} style={{ transform: `rotate(${-padRotation}deg)` }} />
-                    </button>
-                 )}
-              </div>
-
-              <div className={`${padRotation % 180 === 90 ? 'w-[1px] h-6' : 'w-6 h-[1px]'} bg-gray-200`}></div>
-
-              <div className={`flex gap-1 ${padRotation % 180 === 90 ? 'flex-row' : 'flex-col'}`}>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadRotation(r => (r + 90) % 360); }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
-                    <RotateCw size={18} />
-                 </button>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadZoom(z => Math.max(0.2, z - 0.1)); }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
-                    <ZoomOut size={18} />
-                 </button>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadZoom(z => Math.min(5, z + 0.1)); }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
-                    <ZoomIn size={18} />
-                 </button>
-              </div>
-
-              <div className={`${padRotation % 180 === 90 ? 'w-[1px] h-6' : 'w-6 h-[1px]'} bg-gray-200`}></div>
-
-              <button onPointerDown={(e) => { e.stopPropagation(); analyzePad(); }} className="ai-small-btn group">
-                 <Zap size={22} className="group-hover:animate-pulse" />
-              </button>
-
-              {showPadSettings && (padTool === 'pen' || padTool === 'eraser') && (
-                 <div className={`absolute ${padRotation % 180 === 90 ? 'top-full left-1/2 -translate-x-1/2 mt-3' : 'left-full top-1/2 -translate-y-1/2 ml-3'} animate-slide-up z-[460]`}>
-                    <div className="temporal-settings p-4 flex items-center gap-6 border border-gray-100 shadow-2xl">
-                       <div className="flex items-center gap-3">
-                          <Maximize size={16} className="text-gray-400" />
-                          <input type="range" min="1" max="100" step="1" className="w-32 lg:w-48 accent-indigo-600" value={padThickness} onChange={e => { 
-                            const val = parseInt(e.target.value);
-                            if (padTool === 'pen') setPadPenThickness(val);
-                            else if (padTool === 'eraser') setPadEraserThickness(val);
-                            triggerSettingsDisplay(); 
-                          }} />
-                          <span className="text-xs font-black text-indigo-600 w-6">{padThickness}</span>
-                       </div>
-                       {padTool === 'pen' && (
-                          <div className="flex gap-2">
-                             <button onPointerDown={(e) => { e.stopPropagation(); setPadColor('#1e3a8a'); triggerSettingsDisplay(); }} className={`w-8 h-8 rounded-full border-4 ${padColor === '#1e3a8a' ? 'border-indigo-300' : 'border-transparent'} bg-blue-900 shadow-sm transition-all`}></button>
-                             <button onPointerDown={(e) => { e.stopPropagation(); setPadColor('#000000'); triggerSettingsDisplay(); }} className={`w-8 h-8 rounded-full border-4 ${padColor === '#000000' ? 'border-gray-300' : 'border-transparent'} bg-black shadow-sm transition-all`}></button>
-                          </div>
-                       )}
-                    </div>
-                 </div>
-              )}
-           </div>
-
-           <div className="flex-1 relative bg-[#0f172a] overflow-auto flex items-center justify-center p-6 lg:p-20 custom-scrollbar z-10">
-              <div 
-                style={{ 
-                  transform: `rotate(${padRotation}deg) scale(${padZoom})`, 
-                  transition: 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)', 
-                  boxShadow: '0 40px 120px rgba(0,0,0,0.5)', 
-                  width: `${paperDims.w}px`,
-                  height: `${paperDims.h}px`
-                }} 
-                className="bg-white rounded-lg overflow-hidden relative cursor-crosshair shrink-0"
-              >
-                 <canvas ref={padBgCanvasRef} width={paperDims.w} height={paperDims.h} className="absolute inset-0 z-0 pointer-events-none" />
-                 <canvas 
-                   ref={padInkCanvasRef} 
-                   width={paperDims.w} 
-                   height={paperDims.h}
-                   onMouseDown={handlePadStart} 
-                   onMouseMove={handlePadMove} 
-                   onMouseUp={handlePadEnd} 
-                   onMouseLeave={handlePadEnd} 
-                   onTouchStart={handlePadStart} 
-                   onTouchMove={handlePadMove} 
-                   onTouchEnd={handlePadEnd} 
-                   className="relative z-10 digital-pad-canvas" 
-                 />
-                 
-                 {/* TYPE-ON-RX OVERLAY - SYNCED TO DIMENSIONS */}
-                 {padTool === 'type' && (
-                    <div className="rx-typing-overlay" style={{ width: `${paperDims.w}px`, height: `${paperDims.h}px` }}>
-                       {settings.elements.filter(el => el.visible).map(el => {
-                          if (el.id === 'patientId') return null; // ID is system managed
-
-                          let content = null;
-                          const isPatientField = el.id === 'patientName' || el.id === 'age' || el.id === 'vital_weight';
-                          
-                          // Balanced Expansion Logic (25% on each side)
-                          const isItems = el.id === 'items';
-                          const displayWidth = isItems ? el.width * 1.5 : el.width;
-                          const displayX = isItems ? el.x - (el.width * 0.25) : el.x;
-
-                          const baseStyle: React.CSSProperties = {
-                             position: 'absolute',
-                             left: `${displayX}px`,
-                             top: `${el.y}px`,
-                             width: `${displayWidth}px`,
-                             fontSize: `${el.fontSize}pt`,
-                             transform: `rotate(${el.rotation}deg)`,
-                             textAlign: el.align || 'right',
-                             zIndex: activeTypingFieldId?.includes(el.id) ? 30 : 25,
-                             fontFamily: settings.fontFamily,
-                             direction: 'rtl'
-                          };
-
-                          if (isItems) {
-                             content = (
-                                <div style={{ width: `${displayWidth}px` }} className="space-y-1 pointer-events-auto bg-white/70 backdrop-blur-xl p-5 rounded-[2.5rem] border-2 border-dashed border-indigo-200 shadow-[0_20px_50px_rgba(0,0,0,0.15)] overflow-visible animate-slide-up">
-                                   <div className="flex justify-between items-center mb-4 px-2">
-                                      <span className="text-[12px] font-black text-indigo-800 uppercase tracking-widest flex items-center gap-2"><Pill size={16}/> لیست اقلام دارویی</span>
-                                      <button onClick={addItem} className="p-2 bg-indigo-600 text-white rounded-xl shadow-lg hover:rotate-90 transition-all active:scale-90"><Plus size={18}/></button>
-                                   </div>
-                                   
-                                   {/* Pro Matrix Header (Farsi Only) */}
-                                   <div className="med-matrix-header">
-                                      <div>نام و شکل دارو</div>
-                                      <div className="text-center">تعداد</div>
-                                      <div className="text-center">دستور مصرف</div>
-                                      <div></div>
-                                   </div>
-
-                                   <div className="space-y-2">
-                                      {items.map((item, idx) => (
-                                         <div key={idx} className="rx-item-row group relative overflow-visible bg-white/50 border border-transparent hover:border-indigo-100 hover:bg-white transition-all shadow-sm">
-                                            <div className="flex-[5] relative overflow-visible">
-                                               <input 
-                                                   className="rx-item-input rx-field-input-med w-full px-2" 
-                                                   placeholder="نام دارو..." 
-                                                   value={item.drug} 
-                                                   onChange={e => updateItem(idx, 'drug', e.target.value)} 
-                                                   onFocus={() => { setActiveItemIndex(idx); setSuggestionType('drug'); setSearchQuery(item.drug); setActiveTypingFieldId(`item_drug_${idx}`); }}
-                                                   onBlur={() => { setTimeout(() => { if (activeTypingFieldId === `item_drug_${idx}`) { setSuggestionType(null); setActiveTypingFieldId(null); } }, 200); }}
-                                               />
-                                               {suggestionType === 'drug' && activeItemIndex === idx && getDrugSuggestions().length > 0 && (
-                                                   <div className="suggestion-box-overlay">
-                                                       {getDrugSuggestions().map(d => (
-                                                           <button key={d.id} onMouseDown={(e) => { e.preventDefault(); selectSuggestedDrug(d.name); }} className="w-full text-right p-3 hover:bg-indigo-50 border-b border-gray-50 last:border-0 flex items-center gap-3 transition-colors">
-                                                               {getFormIcon(d.name)}
-                                                               <span className="text-sm font-black text-gray-700 truncate">{d.name}</span>
-                                                           </button>
-                                                       ))}
-                                                   </div>
-                                               )}
-                                            </div>
-                                            <div className="flex-[1.5] relative overflow-visible">
-                                               <input 
-                                                   className="rx-item-input rx-field-input-med w-full font-mono text-center text-indigo-700" 
-                                                   placeholder="N=30" 
-                                                   value={item.dosage} 
-                                                   onChange={e => updateItem(idx, 'dosage', e.target.value)} 
-                                                   onFocus={() => { setActiveItemIndex(idx); setSuggestionType('dosage'); setActiveTypingFieldId(`item_dosage_${idx}`); }}
-                                                   onBlur={() => { setTimeout(() => { if (activeTypingFieldId === `item_dosage_${idx}`) { setSuggestionType(null); setActiveTypingFieldId(null); } }, 200); }}
-                                               />
-                                               {suggestionType === 'dosage' && activeItemIndex === idx && (
-                                                   <div className="suggestion-box-overlay p-2 flex flex-col gap-1 max-h-48 overflow-y-auto custom-scrollbar min-w-[120px]">
-                                                       <p className="text-[9px] font-black text-gray-400 mr-2 mb-1 uppercase">پیشنهاد تعداد</p>
-                                                       {getSmartDosages().map(d => (
-                                                           <button key={d} onMouseDown={(e) => { e.preventDefault(); selectSuggestedDosage(d); }} className="text-center p-3 hover:bg-indigo-50 rounded-xl text-[11px] font-black text-teal-700 border border-gray-50 transition-colors active:scale-95">{d}</button>
-                                                       ))}
-                                                   </div>
-                                               )}
-                                            </div>
-                                            <div className="flex-[3.5] relative overflow-visible">
-                                               <input 
-                                                   className="rx-item-input rx-field-input-med w-full text-gray-500 font-bold text-center" 
-                                                   placeholder="N=30" 
-                                                   value={item.instruction} 
-                                                   onChange={e => updateItem(idx, 'instruction', e.target.value)} 
-                                                   onFocus={() => { setActiveItemIndex(idx); setSuggestionType('instruction'); setActiveTypingFieldId(`item_instruction_${idx}`); }}
-                                                   onBlur={() => { setTimeout(() => { if (activeTypingFieldId === `item_instruction_${idx}`) { setSuggestionType(null); setActiveTypingFieldId(null); } }, 200); }}
-                                               />
-                                               {suggestionType === 'instruction' && activeItemIndex === idx && (
-                                                   <div className="suggestion-box-overlay p-2 flex flex-col gap-1 max-h-56 overflow-y-auto custom-scrollbar">
-                                                       <p className="text-[9px] font-black text-gray-400 mr-2 mb-1 uppercase">پیشنهاد مصرف</p>
-                                                       {getSmartInstructions(item.drug).map(ins => (
-                                                           <button key={ins} onMouseDown={(e) => { e.preventDefault(); selectSuggestedInstruction(ins); }} className="text-right p-3 hover:bg-indigo-50 rounded-xl text-[11px] font-black text-gray-600 border border-gray-50 transition-colors">{ins}</button>
-                                                       ))}
-                                                   </div>
-                                               )}
-                                            </div>
-                                            <button onClick={() => removeItem(idx)} className="p-1 text-red-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"><Trash size={18}/></button>
-                                         </div>
-                                      ))}
-                                   </div>
-                                </div>
-                             );
-                          } else {
-                             let val = "";
-                             let updateFn = (v: string) => {};
-                             let placeholderText = getCleanLabel(el.id, el.label);
-
-                             switch(el.id) {
-                                case 'patientName': 
-                                    val = selectedPatient?.name || ""; 
-                                    updateFn = (v) => setSelectedPatient(prev => ({ ...(prev || {} as PatientRecord), name: v }));
-                                    break;
-                                case 'age': 
-                                    val = selectedPatient?.age || ""; 
-                                    updateFn = (v) => setSelectedPatient(prev => ({ ...(prev || {} as PatientRecord), age: v }));
-                                    break;
-                                case 'diagnosis': val = diagnosis; updateFn = setDiagnosis; break;
-                                case 'chiefComplaint': val = chiefComplaint; updateFn = setChiefComplaint; break;
-                                case 'vital_bp': val = vitals.bloodPressure; updateFn = (v) => handleVitalChange('bloodPressure', v); break;
-                                case 'vital_hr': val = vitals.heartRate; updateFn = (v) => handleVitalChange('heartRate', v); break;
-                                case 'vital_rr': val = vitals.respiratoryRate; updateFn = (v) => handleVitalChange('respiratoryRate', v); break;
-                                case 'vital_temp': val = vitals.temperature; updateFn = (v) => handleVitalChange('temperature', v); break;
-                                case 'vital_weight': val = vitals.weight; updateFn = (v) => handleVitalChange('weight', v); break;
-                                case 'vital_o2': val = vitals.spO2; updateFn = (v) => handleVitalChange('spO2', v); break;
-                                case 'vital_bs': val = vitals.bloodSugar; updateFn = (v) => handleVitalChange('bloodSugar', v); break;
-                                case 'date': val = new Date().toLocaleDateString('fa-IR'); break;
-                             }
-
-                             const isCC = el.id === 'chiefComplaint';
-                             
-                             content = (
-                                <div className="majestic-input-group">
-                                   {isCC ? (
-                                      <textarea 
-                                         className={`rx-field-input w-full auto-height-textarea ${activeTypingFieldId === el.id ? 'active' : ''}`}
-                                         value={val}
-                                         onChange={e => {
-                                            updateFn(e.target.value);
-                                            e.target.style.height = 'inherit';
-                                            e.target.style.height = `${e.target.scrollHeight}px`;
-                                         }}
-                                         onFocus={(e) => {
-                                            setActiveTypingFieldId(el.id);
-                                            e.target.style.height = 'inherit';
-                                            e.target.style.height = `${e.target.scrollHeight}px`;
-                                         }}
-                                         onBlur={() => setActiveTypingFieldId(null)}
-                                         placeholder=" "
-                                         style={{ textAlign: el.align as any, fontSize: `${el.fontSize}pt`, fontWeight: 900 }}
-                                      />
-                                   ) : (
-                                      <input 
-                                         className={`rx-field-input w-full ${activeTypingFieldId === el.id ? 'active' : ''} ${isPatientField ? 'rx-field-input-patient' : ''}`}
-                                         value={val}
-                                         onChange={e => updateFn(e.target.value)}
-                                         onFocus={() => setActiveTypingFieldId(el.id)}
-                                         onBlur={() => setActiveTypingFieldId(null)}
-                                         placeholder=" "
-                                         style={{ textAlign: el.align as any, fontSize: isPatientField ? `${el.fontSize * 1.2}pt` : `${el.fontSize}pt`, fontWeight: 900 }}
-                                      />
-                                   )}
-                                   <span className="rx-field-placeholder absolute inset-0 flex items-center pointer-events-none" style={{ justifyContent: el.align === 'center' ? 'center' : (el.align === 'left' ? 'flex-start' : 'flex-end'), padding: '0 12px' }}>
-                                      {placeholderText}
-                                   </span>
-                                </div>
-                             );
-                          }
-
-                          return (
-                             <div key={el.id} style={baseStyle}>
-                                {content}
-                             </div>
-                          );
-                       })}
-                    </div>
-                 )}
-              </div>
-           </div>
-        </div>
       )}
 
       {showSaveModal && (<div className="fixed inset-0 bg-black/50 z-[160] backdrop-blur-sm flex items-center justify-center p-4"><div className="bg-white rounded-[2rem] p-8 w-full max-sm shadow-2xl animate-fade-in"><h3 className="font-black text-xl text-gray-800 mb-6 flex items-center gap-2"><LayoutTemplate className="text-indigo-600" />ذخیره به عنوان قالب</h3><input autoFocus className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl mb-6 outline-none focus:ring-4 focus:ring-indigo-100 font-bold" placeholder="نام قالب (مثال: سرماخوردگی)" value={templateName} onChange={e => setTemplateName(e.target.value)} /><div className="flex justify-end gap-3"><button onClick={() => setShowSaveModal(false)} className="px-6 py-3 font-bold text-gray-500 hover:text-gray-800 transition-colors">لغو</button><button onClick={handleSaveTemplate} className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-black shadow-lg shadow-indigo-100">ذخیره نسخه</button></div></div></div>)}

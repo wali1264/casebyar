@@ -487,7 +487,7 @@ const Settings: React.FC = () => {
 
                {editingDrug && (
                   <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
-                     <div className="bg-white w-full max-w-sm rounded-[2.5rem] shadow-2xl p-8 animate-fade-in">
+                     <div className="bg-white w-full max-sm rounded-[2.5rem] shadow-2xl p-8 animate-fade-in">
                         <div className="flex justify-between items-center mb-8">
                            <h4 className="font-black text-xl text-gray-800 flex items-center gap-2"><Edit2 size={24} className="text-indigo-600" /> ویرایش دارو</h4>
                            <button onClick={() => setEditingDrug(null)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors"><X size={24} /></button>
@@ -532,7 +532,7 @@ const Settings: React.FC = () => {
                      <div ref={canvasRef} style={{ width: dims.w + 'px', height: dims.h + 'px', backgroundImage: paperSettings.backgroundImage ? `url(${paperSettings.backgroundImage})` : 'none', backgroundSize: '100% 100%' }} className="bg-white shadow-2xl relative transition-all duration-300 transform scale-[0.6] origin-top lg:scale-100 lg:origin-center">
                         {!paperSettings.backgroundImage && <div className="absolute inset-0 flex items-center justify-center text-gray-300 pointer-events-none"><span className="text-4xl font-bold opacity-20 transform -rotate-45">محل آپلود عکس سربرگ</span></div>}
                         {paperSettings.elements.filter(el => el.visible).map(el => (
-                           <div key={el.id} onMouseDown={(e) => handleMouseDown(e, el.id)} onTouchStart={(e) => handleTouchStart(e, el.id)} style={{ position: 'absolute', left: el.x + 'px', top: el.y + 'px', width: el.width + 'px', fontSize: el.fontSize + 'pt', transform: `rotate(${el.rotation}deg)`, cursor: isDragging ? 'grabbing' : 'grab', border: selectedElementId === el.id ? '2px dashed #3b82f6' : '1px dotted #ccc', backgroundColor: selectedElementId === el.id ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.6)', zIndex: selectedElementId === el.id ? 10 : 1, textAlign: el.align || 'right' }} className="group hover:border-blue-400 select-none touch-none">{el.label}</div>
+                           <div key={el.id} onMouseDown={(e) => handleMouseDown(e, el.id)} onTouchStart={(e) => handleTouchStart(e, el.id)} style={{ position: 'absolute', left: el.x + 'px', top: el.y + 'px', width: el.width + 'px', fontSize: el.fontSize + 'pt', transform: `rotate(${el.rotation}deg)`, transformOrigin: 'top right', cursor: isDragging ? 'grabbing' : 'grab', border: selectedElementId === el.id ? '2px dashed #3b82f6' : '1px dotted #ccc', backgroundColor: selectedElementId === el.id ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.6)', zIndex: selectedElementId === el.id ? 10 : 1, textAlign: el.align || 'right' }} className="group hover:border-blue-400 select-none touch-none">{el.label}</div>
                         ))}
                      </div>
                   </div>

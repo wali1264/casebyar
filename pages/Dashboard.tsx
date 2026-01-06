@@ -213,7 +213,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
        .signature-area { text-align: center; border-top: 1px solid #1e3a8a; padding-top: 2mm; width: 50mm; }
        .footer-motto { font-size: 8pt; font-style: italic; color: #94a3b8; text-align: center; width: 100%; border-top: 1px solid #f1f5f9; padding-top: 4mm; margin-top: 8mm; }
        .custom-container { position: relative; width: 100%; height: 100%; overflow: hidden; padding: 0 !important; margin: 0 !important; }
-       .print-element { position: absolute; white-space: normal; word-wrap: break-word; line-height: 1.4; }
+       .print-element { position: absolute; white-space: normal; word-wrap: break-word; line-height: 1.4; transform-origin: top right; }
        .bg-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: fill; z-index: -1; }
      `;
 
