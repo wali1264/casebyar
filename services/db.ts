@@ -17,6 +17,7 @@ const VERSION = 8;
 const SYNC_LOCK_KEY = 'tabib_auth_hard_lock';
 const SESSION_BIRTH_KEY = 'tabib_session_birth_ts';
 const LAST_BACKUP_KEY = 'tabib_last_backup_ts';
+const PENDING_BACKUP_KEY = 'tabib_pending_cloud_sync';
 
 export const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -82,7 +83,7 @@ export const initDB = (): Promise<IDBDatabase> => {
   });
 };
 
-// --- BACKUP HELPERS ---
+// --- BACKUP & SYNC HELPERS ---
 
 export const isDatabaseEmpty = async (): Promise<boolean> => {
   const db = await initDB();
@@ -104,6 +105,19 @@ export const getLastBackupTime = (): number => {
   return ts ? parseInt(ts) : 0;
 };
 
+// Hybrid Sync Queue Logic
+export const savePendingBackup = (json: string) => {
+  localStorage.setItem(PENDING_BACKUP_KEY, json);
+};
+
+export const getPendingBackup = (): string | null => {
+  return localStorage.getItem(PENDING_BACKUP_KEY);
+};
+
+export const clearPendingBackup = () => {
+  localStorage.removeItem(PENDING_BACKUP_KEY);
+};
+
 export const getOnlineBackupMetadata = async (userId: string): Promise<{ updatedAt: string | null }> => {
   const { data, error } = await supabase
     .from('backups')
@@ -116,6 +130,15 @@ export const getOnlineBackupMetadata = async (userId: string): Promise<{ updated
 };
 
 export const uploadBackupOnline = async (userId: string, dataJson: string): Promise<void> => {
+  // Validate structure before uploading to prevent cloud corruption
+  try {
+    const parsed = JSON.parse(dataJson);
+    if (!parsed[STORE_NAME]) throw new Error("Invalid backup structure: Missing critical stores.");
+  } catch (e) {
+    console.error("Backup Validation Failed", e);
+    throw new Error("Malformed backup data. Aborting upload.");
+  }
+
   const { error } = await supabase
     .from('backups')
     .upsert({ 
@@ -199,6 +222,7 @@ export const clearAuthMetadata = async (): Promise<void> => {
   setAuthHardLock(true);
   localStorage.removeItem(SESSION_BIRTH_KEY);
   localStorage.removeItem(LAST_BACKUP_KEY); 
+  localStorage.removeItem(PENDING_BACKUP_KEY);
   
   const db = await initDB();
   return new Promise((resolve, reject) => {
@@ -366,6 +390,74 @@ export const getUsageStats = async (): Promise<any[]> => {
   });
 };
 
+export const removeDosageFromUsage = async (dosage: string): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(USAGE_STORE, 'readwrite');
+    const store = tx.objectStore(USAGE_STORE);
+    const request = store.openCursor();
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        const usage = cursor.value;
+        if (usage.lastDosage === dosage) {
+          usage.lastDosage = undefined;
+          cursor.update(usage);
+        }
+        cursor.continue();
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
+export const removeInstructionFromUsage = async (instruction: string, drugName?: string): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(USAGE_STORE, 'readwrite');
+    const store = tx.objectStore(USAGE_STORE);
+    
+    if (drugName) {
+        const getReq = store.get(drugName);
+        getReq.onsuccess = () => {
+            const usage = getReq.result;
+            if (usage) {
+                if (usage.commonInstructions) {
+                    usage.commonInstructions = usage.commonInstructions.filter((i: string) => i !== instruction);
+                }
+                if (usage.lastInstruction === instruction) usage.lastInstruction = undefined;
+                store.put(usage);
+            }
+        };
+    } else {
+        const request = store.openCursor();
+        request.onsuccess = (event) => {
+            const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
+            if (cursor) {
+                const usage = cursor.value;
+                let changed = false;
+                if (usage.commonInstructions) {
+                    const filtered = usage.commonInstructions.filter((i: string) => i !== instruction);
+                    if (filtered.length !== usage.commonInstructions.length) {
+                        usage.commonInstructions = filtered;
+                        changed = true;
+                    }
+                }
+                if (usage.lastInstruction === instruction) {
+                    usage.lastInstruction = undefined;
+                    changed = true;
+                }
+                if (changed) cursor.update(usage);
+                cursor.continue();
+            }
+        };
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
 export const saveRecord = async (record: PatientRecord): Promise<void> => {
   const db = await initDB();
   if (!record.displayId) {
@@ -530,12 +622,12 @@ export const saveSettings = async (settings: PrescriptionSettings): Promise<void
 
 export const getSettings = async (): Promise<PrescriptionSettings | undefined> => {
   const db = await initDB();
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const tx = db.transaction(SETTINGS_STORE, 'readonly');
     const store = tx.objectStore(SETTINGS_STORE);
     const request = store.get('config');
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => resolve(undefined);
   });
 };
 
@@ -552,12 +644,12 @@ export const saveDoctorProfile = async (profile: DoctorProfile): Promise<void> =
 
 export const getDoctorProfile = async (): Promise<DoctorProfile | undefined> => {
   const db = await initDB();
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const tx = db.transaction(PROFILE_STORE, 'readonly');
     const store = tx.objectStore(PROFILE_STORE);
     const request = store.get('main_profile');
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => resolve(undefined);
   });
 };
 
@@ -586,6 +678,11 @@ export const exportDatabase = async (): Promise<string> => {
   });
 };
 
+/**
+ * Mirror-Sync Protocol v3: 
+ * Purges the entire database before population to ensure 
+ * current device is a perfect mirror of the backup.
+ */
 export const importDatabase = async (jsonString: string): Promise<void> => {
   const db = await initDB();
   const data = JSON.parse(jsonString);
@@ -597,6 +694,12 @@ export const importDatabase = async (jsonString: string): Promise<void> => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
 
+    // Phase 1: Purge All Stores (Atomic)
+    for (const storeName of stores) {
+        tx.objectStore(storeName).clear();
+    }
+
+    // Phase 2: Populate with Mirror Data
     for (const storeName of stores) {
       if (data[storeName]) {
         const store = tx.objectStore(storeName);
