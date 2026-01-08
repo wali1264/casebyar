@@ -1,6 +1,6 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-/* Added missing RotateCw icon to the import list below */
-import { Pill, MapPin, Camera, ArrowLeft, Loader2, ShoppingBag, CheckCircle2, Truck, X, Menu, Phone, ChevronRight, Building2, ShieldCheck, Archive, Stethoscope, RefreshCw, RotateCw } from 'lucide-react';
+import { Pill, MapPin, Camera, ArrowLeft, Loader2, ShoppingBag, CheckCircle2, Truck, X, Menu, Phone, ChevronRight, Building2, ShieldCheck, Archive, Stethoscope, RefreshCw, RotateCw, Image as ImageIcon, AlertCircle } from 'lucide-react';
 import { PharmaOrder, PharmaInventoryItem, AppMode } from '../../types';
 import { getPharmaInventory, createPharmaOrder, getPharmaCompanies } from '../../services/pharmaDb';
 import { analyzeAndMatchPrescription } from '../../services/geminiPharma';
@@ -23,18 +23,19 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
 
-  // Camera Refs & State
+  // Camera & Gallery Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
 
   const provinces = ["فراه", "کابل", "هرات", "قندهار", "بلخ", "ننگرهار", "هلمند", "کندز", "غزنی", "پکتیا"];
 
   useEffect(() => {
     loadBaseData();
+    return () => stopCamera(); // Cleanup on unmount
   }, []);
 
-  // CRITICAL: Bind camera stream to video element when the scanning UI is rendered
   useEffect(() => {
     if (step === 'scanning' && stream && videoRef.current) {
       videoRef.current.srcObject = stream;
@@ -47,72 +48,109 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
       setInventory(inv);
       setCompanies(comps);
     } catch (e) {
-      console.error("Failed to load inventory for portal", e);
+      console.error("Failed to load inventory", e);
     }
   };
 
+  // --- CAMERA LOGIC ---
   const startScanning = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("مرورگر شما از قابلیت دوربین پشتیبانی نمی‌کند. لطفاً از نسخه‌های بروز کروم یا سافاری استفاده کنید.");
+      return;
+    }
+
     try {
       const s = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: 'environment',
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        } 
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
+        audio: false 
       });
       setStream(s);
-      setStep('scanning'); // Change step AFTER obtaining stream
-    } catch (e) {
-      alert("خطا در دسترسی به کمره. لطفا اجازه دسترسی به دوربین را صادر کنید.");
+      setStep('scanning');
+    } catch (err: any) {
+      console.error("Camera Access Error:", err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        alert("دسترسی به دوربین توسط شما رد شده است. لطفاً در تنظیمات مرورگر، اجازه دسترسی را صادر کرده و صفحه را رفرش کنید.");
+      } else {
+        alert("خطا در باز کردن کمره. ممکن است برنامه دیگری در حال استفاده از آن باشد.");
+      }
     }
   };
 
   const stopCamera = () => {
     if (stream) {
-      stream.getTracks().forEach(t => t.stop());
+      stream.getTracks().forEach(track => {
+        track.stop();
+        track.enabled = false;
+      });
+      setStream(null);
     }
-    setStream(null);
   };
 
-  const capturePhoto = async () => {
+  // --- SHARED ANALYSIS LOGIC ---
+  const processPrescriptionFile = async (file: File) => {
+    setIsProcessing(true);
+    setStep('quoting');
+    
+    try {
+      const res = await analyzeAndMatchPrescription(file, inventory, language);
+      if (res && res.quotation) {
+        const initialItems = res.quotation.map((q: any) => {
+          const availableOptions = inventory.filter(i => 
+            i.generic_name.toLowerCase().includes(q.matchedGeneric?.toLowerCase() || '')
+          );
+          return {
+             ...q,
+             options: availableOptions.length > 0 ? availableOptions : [{id: 'none', brand_name: q.selectedBrand, price_afn: 0, company_id: 'Unknown'}],
+             selectedIndex: 0
+          };
+        }).map((item: any) => {
+           const selected = item.options[0];
+           const qtyNum = parseInt(item.qty?.replace(/[^0-9]/g, '') || '1') || 1;
+           return { ...item, unitPrice: selected.price_afn, totalPrice: selected.price_afn * qtyNum };
+        });
+        setScannedDrugs(initialItems);
+      } else {
+        throw new Error("No data returned from AI");
+      }
+    } catch (e) {
+      alert("متاسفانه هوش مصنوعی قادر به تحلیل این تصویر نبود. لطفاً عکس واضح‌تری بگیرید.");
+      setStep('landing');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const capturePhoto = () => {
     if (!videoRef.current || !canvasRef.current) return;
     const canvas = canvasRef.current;
     const video = videoRef.current;
+    
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext('2d')?.drawImage(video, 0, 0);
     
     stopCamera();
-    setIsProcessing(true);
-    setStep('quoting');
-
     canvas.toBlob(async (blob) => {
-      if (!blob) return;
-      const file = new File([blob], "rx.jpg", { type: "image/jpeg" });
-      try {
-        const res = await analyzeAndMatchPrescription(file, inventory, language);
-        if (res && res.quotation) {
-          const initialItems = res.quotation.map((q: any) => {
-            const availableOptions = inventory.filter(i => i.generic_name.toLowerCase().includes(q.matchedGeneric.toLowerCase()));
-            return {
-               ...q,
-               options: availableOptions.length > 0 ? availableOptions : [{id: 'none', brand_name: q.selectedBrand, price_afn: 0, company_id: 'Unknown'}],
-               selectedIndex: 0
-            };
-          }).map((item: any) => {
-             const selected = item.options[0];
-             const qtyNum = parseInt(item.qty.replace(/[^0-9]/g, '')) || 1;
-             return { ...item, unitPrice: selected.price_afn, totalPrice: selected.price_afn * qtyNum };
-          });
-          setScannedDrugs(initialItems);
-        }
-      } catch (e) {
-        alert("خطا در تحلیل نسخه توسط هوش مصنوعی");
-        setStep('landing');
-      } finally {
-        setIsProcessing(false);
+      if (blob) {
+        const file = new File([blob], "prescription_capture.jpg", { type: "image/jpeg" });
+        await processPrescriptionFile(file);
       }
     }, 'image/jpeg', 0.9);
+  };
+
+  const handleGalleryClick = () => {
+    galleryInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      await processPrescriptionFile(file);
+    }
   };
 
   const handleDialScroll = (itemIdx: number, direction: 'up' | 'down') => {
@@ -128,10 +166,10 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
       const selected = item.options[newIdx];
       item.selectedBrand = selected.brand_name;
       item.unitPrice = selected.price_afn;
-      const qtyNum = parseInt(item.qty.replace(/[^0-9]/g, '')) || 1;
+      const qtyNum = parseInt(item.qty?.replace(/[^0-9]/g, '') || '1') || 1;
       item.totalPrice = item.unitPrice * qtyNum;
       setScannedDrugs(updated);
-      if (window.navigator.vibrate) window.navigator.vibrate(12);
+      if (window.navigator.vibrate) window.navigator.vibrate(10);
     }
   };
 
@@ -156,7 +194,7 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
       });
       setStep('success');
     } catch (e) {
-      alert("خطا در ثبت نهایی سفارش. لطفا اینترنت خود را چک کنید.");
+      alert("خطا در ثبت نهایی سفارش.");
     } finally {
       setIsProcessing(false);
     }
@@ -178,7 +216,7 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
                   {item.options.map((opt: any, oIdx: number) => (
                      <div 
                        key={oIdx} 
-                       className={`h-10 flex items-center justify-center transition-all duration-500 ${oIdx === item.selectedIndex ? 'text-white text-xl font-black scale-110' : 'text-gray-600 text-sm opacity-10 blur-[0.5px]'}`}
+                       className={`h-10 flex items-center justify-center transition-all duration-500 ${oIdx === item.selectedIndex ? 'text-white text-xl font-black scale-110' : 'text-gray-600 text-sm opacity-10'}`}
                      >
                         {opt.brand_name}
                      </div>
@@ -201,6 +239,15 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans" dir="rtl">
+      {/* Hidden Gallery Input */}
+      <input 
+        type="file" 
+        ref={galleryInputRef} 
+        onChange={handleFileChange} 
+        accept="image/*" 
+        className="hidden" 
+      />
+
       <header className="p-4 flex justify-between items-center bg-white shadow-sm border-b border-gray-100 sticky top-0 z-[100]">
          <div className="flex items-center gap-3">
             <button onClick={() => setIsMenuOpen(true)} className="p-2.5 bg-gray-50 rounded-xl text-gray-400 active:scale-90 transition-transform"><Menu size={24} /></button>
@@ -208,6 +255,13 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
             <h1 className="text-xl font-black text-gray-900 tracking-tight">دارویار هوشمند</h1>
          </div>
          <div className="flex gap-2">
+            <button 
+               onClick={handleGalleryClick} 
+               className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-600 active:scale-90 transition-transform"
+               title="انتخاب از گالری"
+            >
+               <ImageIcon size={22} />
+            </button>
             <button onClick={() => setLanguage(l => l === 'fa' ? 'en' : 'fa')} className="px-3 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-[10px] font-black uppercase text-gray-500">{language}</button>
             <div className="px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-xl text-[10px] font-black text-blue-600 flex items-center gap-1.5"><MapPin size={12} /> {province}</div>
          </div>
@@ -221,18 +275,28 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
                   <p className="text-gray-400 font-bold text-sm leading-relaxed max-w-xs mx-auto">هوش مصنوعی دارویار آماده تحلیل و قیمت‌گذاری نسخه‌های شماست.</p>
                </div>
 
-               <button 
-                 onClick={startScanning}
-                 className="w-64 h-64 bg-white rounded-full shadow-[0_50px_100px_rgba(37,99,235,0.18)] border-[16px] border-blue-50 flex flex-col items-center justify-center gap-4 group active:scale-95 transition-all duration-500 relative"
-               >
-                  <div className="absolute inset-[-12px] rounded-full border-2 border-dashed border-blue-200 animate-spin-slow opacity-30"></div>
-                  <div className="w-24 h-24 bg-blue-600 rounded-[2.5rem] flex items-center justify-center text-white shadow-xl group-hover:rotate-12 transition-transform">
-                     <Camera size={48} />
-                  </div>
-                  <span className="text-xl font-black text-gray-800">اسکن نسخه پزشک</span>
-               </button>
+               <div className="flex flex-col items-center gap-8">
+                  <button 
+                    onClick={startScanning}
+                    className="w-64 h-64 bg-white rounded-full shadow-[0_50px_100px_rgba(37,99,235,0.18)] border-[16px] border-blue-50 flex flex-col items-center justify-center gap-4 group active:scale-95 transition-all duration-500 relative"
+                  >
+                     <div className="absolute inset-[-12px] rounded-full border-2 border-dashed border-blue-200 animate-spin-slow opacity-30"></div>
+                     <div className="w-24 h-24 bg-blue-600 rounded-[2.5rem] flex items-center justify-center text-white shadow-xl group-hover:rotate-12 transition-transform">
+                        <Camera size={48} />
+                     </div>
+                     <span className="text-xl font-black text-gray-800">اسکن با دوربین</span>
+                  </button>
 
-               <div className="mt-20 flex items-center gap-3 text-blue-600 font-black text-[10px] bg-blue-50 px-5 py-3 rounded-2xl border border-blue-100 uppercase tracking-widest">
+                  <button 
+                    onClick={handleGalleryClick}
+                    className="flex items-center gap-3 px-8 py-4 bg-white border border-gray-200 rounded-2xl font-black text-gray-600 shadow-sm hover:bg-gray-50 transition-all active:scale-95"
+                  >
+                     <ImageIcon size={24} className="text-indigo-600" />
+                     انتخاب از گالری تصاویر
+                  </button>
+               </div>
+
+               <div className="mt-16 flex items-center gap-3 text-blue-600 font-black text-[10px] bg-blue-50 px-5 py-3 rounded-2xl border border-blue-100 uppercase tracking-widest">
                   <ShieldCheck size={18} />
                   <span>AI Precision Recognition</span>
                </div>
@@ -244,16 +308,16 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
                <div className="p-6 text-white flex justify-between items-center absolute top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/80 to-transparent">
                   <div className="flex items-center gap-3">
                      <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                     <h3 className="font-black text-lg">در حال واکاوی بصری...</h3>
+                     <h3 className="font-black text-lg">آماده واکاوی بصری...</h3>
                   </div>
-                  <button onClick={() => { stopCamera(); setStep('landing'); }} className="p-2 bg-white/20 rounded-full hover:bg-red-50 transition-colors"><X /></button>
+                  <button onClick={() => { stopCamera(); setStep('landing'); }} className="p-2 bg-white/20 rounded-full hover:bg-red-500 transition-colors"><X /></button>
                </div>
                
                <video ref={videoRef} autoPlay playsInline className="flex-1 object-contain w-full h-full" />
                <canvas ref={canvasRef} className="hidden" />
                
                <div className="p-12 flex justify-center bg-black/90 relative z-20">
-                  <div className="absolute top-0 inset-x-0 h-0.5 bg-blue-500 shadow-[0_0_20px_blue] animate-scan-line opacity-60"></div>
+                  <div className="absolute top-0 inset-x-0 h-0.5 bg-blue-500 shadow-[0_0_25px_blue] animate-scan-line opacity-60"></div>
                   <button onClick={capturePhoto} className="w-24 h-24 bg-white rounded-full border-[10px] border-gray-800 p-1 active:scale-90 transition-transform shadow-2xl">
                      <div className="w-full h-full rounded-full bg-white shadow-inner border border-gray-100"></div>
                   </button>
@@ -275,7 +339,7 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
                   </div>
 
                   {scannedDrugs.map((drug, idx) => (
-                     <div key={idx} className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-gray-100 space-y-6 relative group overflow-hidden transition-all hover:border-blue-200">
+                     <div key={idx} className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-gray-100 space-y-6 relative group overflow-hidden">
                         <div className="absolute top-0 right-0 w-1.5 h-full bg-blue-600/10 group-hover:bg-blue-600 transition-colors"></div>
                         <div className="flex justify-between items-start">
                            <div>
@@ -310,7 +374,7 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
                      </div>
                      <button 
                        onClick={() => setStep('finalizing')}
-                       className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-5 rounded-[1.5rem] font-black shadow-xl flex items-center gap-3 transition-all active:scale-95 shadow-blue-900/40"
+                       className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-5 rounded-[1.5rem] font-black shadow-xl flex items-center gap-3 transition-all active:scale-95"
                      >
                         تایید نهایی <ArrowLeft size={24} />
                      </button>
@@ -357,7 +421,7 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
          )}
       </main>
 
-      {/* Hamburger Menu */}
+      {/* Hamburger Menu Overlay */}
       {isMenuOpen && (
          <div className="fixed inset-0 z-[200] bg-gray-900/98 backdrop-blur-2xl animate-fade-in flex flex-col font-sans" dir="rtl">
             <div className="p-6 flex justify-between items-center border-b border-white/5">
@@ -411,7 +475,7 @@ const PharmaPortal: React.FC<{ onSwitchMode: (m: AppMode) => void, onOpenAuth: (
             </div>
 
             <div className="p-8 border-t border-white/5 text-center">
-               <p className="text-[10px] font-black text-gray-700 uppercase tracking-[0.5em]">Daroyar Engine v4.2 Stable</p>
+               <p className="text-[10px] font-black text-gray-700 uppercase tracking-[0.5em]">Daroyar Engine v4.5 Stable</p>
             </div>
          </div>
       )}
