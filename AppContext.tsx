@@ -462,14 +462,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const completeSale = async (cashier: string, customerId?: string): Promise<{ success: boolean; invoice?: SaleInvoice; message: string }> => {
         const { cart, products, editingSaleInvoiceId, customers, saleInvoices } = state;
         if (cart.length === 0) return { success: false, message: "خالی است!" };
+        
         const subtotal = cart.reduce((total, item) => ((item.type === 'product' ? item.salePrice : item.price) * item.quantity) + total, 0);
         const totalAmount = cart.reduce((total, item) => {
             const price = (item.type === 'product' && item.finalPrice !== undefined) ? item.finalPrice : (item.type === 'product' ? item.salePrice : item.price);
             return (price * item.quantity) + total;
         }, 0);
+        
         const stockUpdates: {batchId: string, newStock: number}[] = [];
         const saleItems: CartItem[] = [];
         const updProducts = JSON.parse(JSON.stringify(products));
+        
         for (const item of cart) {
             if (item.type === 'service') { saleItems.push(item); continue; }
             const p = updProducts.find((p: Product) => p.id === item.id);
@@ -485,16 +488,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
             saleItems.push({ ...item, purchasePrice: totalPurcValue / item.quantity });
         }
+        
         const invoiceId = editingSaleInvoiceId || generateNextId('F', saleInvoices.map(i => i.id));
         const finalInv: SaleInvoice = { id: invoiceId, type: 'sale', items: saleItems, subtotal, totalAmount, totalDiscount: subtotal - totalAmount, timestamp: new Date().toISOString(), cashier, customerId };
+        
         let custUpdate;
         if (customerId) {
             const customer = customers.find(c => c.id === customerId)!;
-            custUpdate = { id: customerId, newBalance: customer.balance + totalAmount, transaction: { id: crypto.randomUUID(), customerId, type: 'credit_sale' as const, amount: totalAmount, date: new Date().toISOString(), description: `فاکتور فروش #${invoiceId}`, invoiceId } };
+            custUpdate = { 
+                id: customerId, 
+                newBalance: customer.balance + totalAmount, 
+                oldAmount: editingSaleInvoiceId ? (saleInvoices.find(i => i.id === editingSaleInvoiceId)?.totalAmount || 0) : 0,
+                newAmount: totalAmount,
+                transactionDescription: `فاکتور فروش #${invoiceId}`,
+                transaction: { id: crypto.randomUUID(), customerId, type: 'credit_sale' as const, amount: totalAmount, date: new Date().toISOString(), description: `فاکتور فروش #${invoiceId}`, invoiceId } 
+            };
         }
+        
         try {
-            if (editingSaleInvoiceId) { await api.updateSale(invoiceId, finalInv, [], [], undefined); }
-            else { await api.createSale(finalInv, stockUpdates, custUpdate); }
+            if (editingSaleInvoiceId) { 
+                await api.updateSale(invoiceId, finalInv, [], [], custUpdate); 
+            }
+            else { 
+                await api.createSale(finalInv, stockUpdates, custUpdate); 
+            }
             await fetchData(true); // Silent update
             setState(prev => ({ ...prev, cart: [], editingSaleInvoiceId: null }));
             return { success: true, invoice: finalInv, message: 'ثبت شد.' };

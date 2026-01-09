@@ -226,6 +226,7 @@ export const api = {
 
     updateSale: async (invoiceId: string, newInvoiceData: SaleInvoice, stockRestores: {productId: string, quantity: number}[], stockDeductions: {batchId: string, quantity: number}[], customerUpdate?: {id: string, oldAmount: number, newAmount: number, transactionDescription: string}) => {
         await db.putItem(db.STORES.SALE_INVOICES, newInvoiceData);
+        // Restore stock for old invoice items if needed
         for (const restore of stockRestores) {
             const p = await db.getById<Product>(db.STORES.PRODUCTS, restore.productId);
             if (p && p.batches.length > 0) {
@@ -238,6 +239,27 @@ export const api = {
             if (customer) {
                 const newBalance = customer.balance - customerUpdate.oldAmount + customerUpdate.newAmount;
                 await db.putItem(db.STORES.CUSTOMERS, { ...customer, balance: newBalance });
+                
+                // Update transaction record in customer account
+                const txs = await db.getAll<CustomerTransaction>(db.STORES.CUSTOMER_TX);
+                const existingTx = txs.find(t => t.invoiceId === invoiceId);
+                if (existingTx) {
+                    existingTx.amount = customerUpdate.newAmount;
+                    existingTx.date = new Date().toISOString();
+                    await db.putItem(db.STORES.CUSTOMER_TX, existingTx);
+                } else if (customerUpdate.newAmount > 0) {
+                    // Create new credit transaction if it was cash but now is credit
+                    const newTx: CustomerTransaction = {
+                        id: crypto.randomUUID(),
+                        customerId: customerUpdate.id,
+                        type: 'credit_sale',
+                        amount: customerUpdate.newAmount,
+                        date: new Date().toISOString(),
+                        description: `اصلاح فاکتور فروش #${invoiceId}`,
+                        invoiceId: invoiceId
+                    };
+                    await db.putItem(db.STORES.CUSTOMER_TX, newTx);
+                }
             }
         }
     },
@@ -260,6 +282,17 @@ export const api = {
             const customer = await db.getById<Customer>(db.STORES.CUSTOMERS, customerRefund.id);
             if (customer) {
                 await db.putItem(db.STORES.CUSTOMERS, { ...customer, balance: customer.balance - customerRefund.amount });
+                // Create transaction record for return
+                const returnTx: CustomerTransaction = {
+                    id: crypto.randomUUID(),
+                    customerId: customerRefund.id,
+                    type: 'sale_return',
+                    amount: customerRefund.amount,
+                    date: returnInvoice.timestamp,
+                    description: `مرجوعی فاکتور #${returnInvoice.originalInvoiceId}`,
+                    invoiceId: returnInvoice.id
+                };
+                await db.putItem(db.STORES.CUSTOMER_TX, returnTx);
             }
         }
     },
@@ -283,7 +316,19 @@ export const api = {
         await db.putItem(db.STORES.PURCHASE_INVOICES, newInvoiceData);
         if (supplierUpdate) {
             const supplier = await db.getById<Supplier>(db.STORES.SUPPLIERS, supplierUpdate.id);
-            if (supplier) await db.putItem(db.STORES.SUPPLIERS, { ...supplier, balance: supplier.balance - supplierUpdate.oldAmount + supplierUpdate.newAmount });
+            if (supplier) {
+                await db.putItem(db.STORES.SUPPLIERS, { ...supplier, balance: supplier.balance - supplierUpdate.oldAmount + supplierUpdate.newAmount });
+                
+                // Update transaction record in supplier account
+                const txs = await db.getAll<SupplierTransaction>(db.STORES.SUPPLIER_TX);
+                const existingTx = txs.find(t => t.invoiceId === invoiceId);
+                if (existingTx) {
+                    existingTx.amount = supplierUpdate.newAmount;
+                    existingTx.date = newInvoiceData.timestamp;
+                    existingTx.currency = newInvoiceData.currency;
+                    await db.putItem(db.STORES.SUPPLIER_TX, existingTx);
+                }
+            }
         }
     },
 
@@ -299,7 +344,20 @@ export const api = {
         }
         if (supplierRefund) {
             const supplier = await db.getById<Supplier>(db.STORES.SUPPLIERS, supplierRefund.id);
-            if (supplier) await db.putItem(db.STORES.SUPPLIERS, { ...supplier, balance: supplier.balance - supplierRefund.amount });
+            if (supplier) {
+                await db.putItem(db.STORES.SUPPLIERS, { ...supplier, balance: supplier.balance - supplierRefund.amount });
+                // Create transaction record for purchase return
+                const returnTx: SupplierTransaction = {
+                    id: crypto.randomUUID(),
+                    supplierId: supplierRefund.id,
+                    type: 'purchase_return',
+                    amount: supplierRefund.amount,
+                    date: returnInvoice.timestamp,
+                    description: `مرجوعی خرید فاکتور #${returnInvoice.originalInvoiceId}`,
+                    invoiceId: returnInvoice.id
+                };
+                await db.putItem(db.STORES.SUPPLIER_TX, returnTx);
+            }
         }
     },
 
