@@ -6,15 +6,15 @@ export interface PatientVitals {
   spO2: string;
   weight: string;
   height: string;
-  respiratoryRate?: string; 
-  bloodSugar?: string; 
+  respiratoryRate?: string; // RR
+  bloodSugar?: string; // Glu
   bmi?: string;
   bsa?: string;
 }
 
 export interface PatientData {
   id?: string;
-  displayId?: string; 
+  displayId?: string; // e.g., "001", "002"
   name: string;
   age: string;
   gender: 'male' | 'female';
@@ -60,9 +60,10 @@ export interface PrescriptionTemplate {
   items: PrescriptionItem[];
 }
 
+// Drug Bank Types
 export interface Drug {
   id: string;
-  name: string; 
+  name: string; // Generic or Common Name
   category?: string;
   isCustom: boolean;
   createdAt: number;
@@ -72,7 +73,7 @@ export interface DrugUsage {
   drugName: string;
   count: number;
   lastUsed: number;
-  commonInstructions: string[]; 
+  commonInstructions: string[]; // Top 3 most used instructions for this drug
   lastDosage?: string;
   lastInstruction?: string;
 }
@@ -81,12 +82,12 @@ export interface LayoutElement {
   id: string;
   type: 'text' | 'list' | 'container';
   label: string;
-  x: number; 
-  y: number; 
-  width: number; 
-  height?: number; 
-  fontSize: number; 
-  rotation: number; 
+  x: number; // pixels
+  y: number; // pixels
+  width: number; // pixels
+  height?: number; // pixels (optional for auto-height text)
+  fontSize: number; // pt
+  rotation: number; // degrees
   visible: boolean;
   align?: 'right' | 'center' | 'left';
 }
@@ -96,12 +97,12 @@ export interface PrescriptionSettings {
   fontFamily: string;
   fontSize: number;
   paperSize: 'A4' | 'A5';
-  backgroundImage?: string; 
-  printBackground: boolean; 
-  elements: LayoutElement[]; 
-  customDosages?: string[]; 
-  customInstructions?: string[]; 
-  autoBackupEnabled?: boolean; 
+  backgroundImage?: string; // Base64
+  printBackground: boolean; // Toggle to print the bg image or not
+  elements: LayoutElement[]; // The coordinates for everything
+  customDosages?: string[]; // Personal saved dosages like N=20
+  customInstructions?: string[]; // Personal saved instructions like "Before sleep"
+  autoBackupEnabled?: boolean; // New: Toggle for automatic hybrid backup
 }
 
 export interface DoctorProfile {
@@ -166,41 +167,42 @@ export interface CardiologyAnalysis {
   findings: string[];
   impression: string;
   severity: 'normal' | 'abnormal' | 'critical';
-  confidence?: string;
-  metrics?: { 
-    rate?: string; 
-    rhythm?: string; 
+  metrics?: {
+    rate?: string;
+    rhythm?: string;
     intervals?: string;
     prInterval?: string;
     qrsComplex?: string;
     qtInterval?: string;
   };
-  differentialDiagnosis?: string[];
   recommendations: string[];
+  confidence?: string;
+  differentialDiagnosis?: string[];
 }
 
 export interface NeurologyAnalysis {
-  type: string;
+  type: 'tremor' | 'gait' | 'speech';
   findings: string[];
   diagnosis: string;
   severity: 'normal' | 'abnormal' | 'critical';
   confidenceScore?: string;
-  clinicalCorrelations?: string[];
   recommendations: string[];
+  clinicalCorrelations?: string[];
 }
 
 export interface PsychologyAnalysis {
-  type?: string;
+  type: 'art' | 'dream' | 'sentiment';
   findings: string[];
-  interpretation?: string;
+  interpretation: string;
   modernAnalysis?: string;
   traditionalAnalysis?: string;
-  severity: 'normal' | 'concern' | 'critical';
+  severity?: 'normal' | 'concern' | 'critical';
   recommendations: string[];
   confidence?: string;
 }
 
 export interface OphthalmologyAnalysis {
+  type: 'fundus' | 'external' | 'vision_test';
   findings: string[];
   diagnosis: string;
   severity: 'normal' | 'abnormal' | 'critical';
@@ -210,132 +212,110 @@ export interface OphthalmologyAnalysis {
 }
 
 export interface PediatricsAnalysis {
-  diagnosis: string;
+  type: 'cry' | 'development' | 'growth';
   findings: string[];
-  recommendations: string[];
+  diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
   confidenceScore?: string;
+  recommendations: string[];
 }
 
 export interface OrthopedicsAnalysis {
-  diagnosis: string;
+  type: 'posture' | 'joints';
   findings: string[];
-  recommendations: string[];
+  diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
   angles?: string[];
+  recommendations: string[];
+  confidence?: string;
 }
 
 export interface DentistryAnalysis {
-  diagnosis: string;
+  type: 'caries' | 'opg' | 'smile';
   findings: string[];
-  recommendations: string[];
+  diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
   toothNumbers?: string[];
+  recommendations: string[];
+  confidence?: string;
 }
 
 export interface GynecologyAnalysis {
-  diagnosis: string;
+  type: 'ultrasound' | 'mammography' | 'fertility';
   findings: string[];
-  recommendations: string[];
+  diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
   measurements?: string[];
+  recommendations: string[];
+  confidence?: string;
 }
 
 export interface PulmonologyAnalysis {
-  type: string;
+  type: 'cough' | 'breath' | 'spirometry';
   findings: string[];
   diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
-  confidence?: string;
   metrics?: string[];
   recommendations: string[];
+  confidence?: string;
   nextSteps?: string[];
 }
 
 export interface GastroenterologyAnalysis {
-  diagnosis: string;
+  type: 'meal' | 'endoscopy' | 'pain';
   findings: string[];
-  recommendations: string[];
+  diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
   mizaj?: string;
   nutrients?: string[];
   organ?: string;
+  recommendations: string[];
+  confidence?: string;
 }
 
 export interface UrologyAnalysis {
-  diagnosis: string;
+  type: 'dipstick' | 'stone' | 'function';
   findings: string[];
-  recommendations: string[];
+  diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
-  dipstickValues?: Array<{ parameter: string; value: string; status: string }>;
+  dipstickValues?: { parameter: string; value: string; status: string }[];
   stoneDetails?: { size: string; location: string; passability: string };
   kidneyFunction?: { gfr: string; stage: string; mizaj: string };
+  recommendations: string[];
+  confidence?: string;
 }
 
 export interface HematologyAnalysis {
-  diagnosis: string;
+  type: 'smear' | 'pathology' | 'markers';
   findings: string[];
-  recommendations: string[];
+  diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
-  cellTypes?: Array<{ name: string; count: string; status: string }>;
-  markersTrend?: Array<{ name: string; trend: string; significance: string }>;
+  cellTypes?: { name: string; count: string; status: string }[];
+  markersTrend?: { name: string; trend: string; significance: string }[];
+  recommendations: string[];
+  confidence?: string;
 }
 
 export interface EmergencyAnalysis {
-  type: string;
+  type: 'wound' | 'toxicology' | 'triage';
   findings: string[];
   diagnosis: string;
   severity: 'normal' | 'urgent' | 'critical';
-  confidence?: string;
   actions: string[];
   triageLevel?: string;
   antidote?: string;
+  confidence?: string;
 }
 
 export interface GeneticsAnalysis {
-  diagnosis: string;
+  type: 'report' | 'pharma' | 'family';
   findings: string[];
-  recommendations: string[];
+  diagnosis: string;
   severity: 'normal' | 'concern' | 'critical';
+  risks?: { condition: string; probability: string }[];
   drugCompatibility?: { drug: string; status: string; recommendation: string };
-  risks?: Array<{ condition: string; probability: string }>;
-}
-
-export enum AppMode {
-  GATEWAY = 'gateway',
-  DOCTOR = 'doctor',
-  PHARMACY = 'pharmacy',
-  ADMIN = 'admin',
-  LOGISTICS = 'logistics'
-}
-
-export interface PharmaCompany {
-  id: string;
-  name_fa: string;
-  name_en: string;
-  country?: string;
-  quality_rating: number;
-}
-
-export interface PharmaInventoryItem {
-  id: string;
-  generic_name: string;
-  brand_name: string;
-  company_id: string;
-  price_afn: number;
-  ai_priority_score: number; 
-  stock_quantity: number;
-}
-
-export interface PharmaOrder {
-  id: string;
-  customer_name: string;
-  customer_phone: string;
-  customer_address: string;
-  items: any[];
-  total_price: number;
-  status: 'pending' | 'processing' | 'out_for_delivery' | 'delivered' | 'cancelled';
-  location?: { lat: number; lng: number };
+  recommendations: string[];
+  confidence?: string;
 }
 
 export interface ChatMessage {

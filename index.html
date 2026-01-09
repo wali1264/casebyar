@@ -4,20 +4,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>دارویار هوشمند | AI Pharmacy Assistant</title>
+    <title>طبیب هوشمند | AI Medical Assistant</title>
     
     <!-- PWA Meta Tags -->
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#2563eb" />
-    <meta name="description" content="داروخانه هوشمند با قابلیت اسکن نسخه و سفارش آنی" />
+    <meta name="description" content="دستیار هوشمند پزشکی با قابلیت تشخیص و مدیریت پرونده بیماران" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
-    <!-- Leaflet Maps CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-
-    <!-- Critical CSS -->
+    <!-- Critical CSS: اجرا قبل از لود شدن تلویند -->
     <style>
       :root {
         --primary: #2563eb;
@@ -29,8 +26,9 @@
         font-family: 'Vazirmatn', sans-serif;
         background-color: var(--bg);
         color: #1e293b;
-        overflow: hidden;
+        overflow: hidden; /* جلوگیری از اسکرول زمان لود */
       }
+      /* استایل پایه برای المان‌ها جهت جلوگیری از حالت مدادی */
       input, button, textarea, select {
         border-radius: 12px;
         border: 1px solid #e2e8f0;
@@ -60,9 +58,41 @@
         margin-bottom: 24px;
         animation: pulse-logo 2s infinite ease-in-out;
       }
+      .pulse-ring {
+        position: absolute;
+        width: 100px;
+        height: 100px;
+        border: 4px solid var(--primary);
+        border-radius: 24px;
+        animation: ring-expand 2s infinite;
+      }
       @keyframes pulse-logo {
         0%, 100% { transform: scale(1); }
         50% { transform: scale(1.05); }
+      }
+      @keyframes ring-expand {
+        0% { transform: scale(1); opacity: 0.5; }
+        100% { transform: scale(1.8); opacity: 0; }
+      }
+      .loading-bar-container {
+        width: 200px;
+        height: 4px;
+        background: #f1f5f9;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-top: 20px;
+      }
+      .loading-bar-fill {
+        height: 100%;
+        width: 30%;
+        background: var(--primary);
+        border-radius: 10px;
+        animation: loading-progress 2s infinite ease-in-out;
+      }
+      @keyframes loading-progress {
+        0% { width: 0%; transform: translateX(-100%); }
+        50% { width: 70%; }
+        100% { width: 0%; transform: translateX(200%); }
       }
       .brand-text {
         font-weight: 900;
@@ -70,18 +100,15 @@
         color: #1e293b;
         margin-top: 16px;
       }
-      .leaflet-container {
-        width: 100%;
-        height: 100%;
-        border-radius: 1.5rem;
-        z-index: 1;
-      }
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #f1f1f1; }
+      ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #555; }
     </style>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;300;400;500;700;900&display=swap" rel="stylesheet">
-    <!-- Leaflet Maps JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
   <script type="importmap">
 {
@@ -99,12 +126,19 @@
 <link rel="stylesheet" href="/index.css">
 </head>
   <body>
+    <!-- Splash Screen: نمایش آنی قبل از لود شدن JS -->
     <div id="splash-screen">
       <div class="logo-container">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"/><path d="m8.5 8.5 7 7"/></svg>
+        <div class="pulse-ring"></div>
+        <!-- Simple medical cross icon in SVG -->
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
       </div>
-      <div class="brand-text">دارویار هوشمند</div>
+      <div class="brand-text">طبیب هوشمند</div>
+      <div class="loading-bar-container">
+        <div class="loading-bar-fill"></div>
+      </div>
     </div>
+
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>
