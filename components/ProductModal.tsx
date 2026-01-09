@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { Product, ProductBatch, SpeechRecognition, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from '../types';
 import { XIcon, ChevronDownIcon, MicIcon, WarningIcon } from './icons';
 import { parseToPackageAndUnits, parseToTotalUnits } from '../utils/formatters';
+import { useAppContext } from '../AppContext';
 
 
 type ProductFormData = Omit<Product, 'id' | 'batches'>;
@@ -15,7 +16,6 @@ type FormState = {
     itemsPerPackage: string;
     barcode: string;
     manufacturer: string;
-    // Batch fields
     purchasePrice: string;
     lotNumber: string;
     expiryDate: string;
@@ -85,13 +85,14 @@ const FormInput: React.FC<React.InputHTMLAttributes<HTMLInputElement> & { label:
             id={id} 
             ref={inputRef}
             {...props} 
-            className={`w-full p-3 bg-white/80 border ${error ? 'border-red-500' : 'border-slate-300/80'} rounded-lg shadow-sm focus:ring-0 transition-all placeholder:text-slate-400 form-input`}
+            className={`w-full p-3 bg-white/80 border ${error ? 'border-red-500 ring-2 ring-red-50' : 'border-slate-300/80'} rounded-lg shadow-sm focus:ring-0 transition-all placeholder:text-slate-400 form-input`}
         />
-         {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
+         {error && <p className="text-red-500 text-xs mt-1 font-bold">{error}</p>}
     </div>
 );
 
 const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave }) => {
+    const { products } = useAppContext();
     const productToFormState = (p: Product | null): FormState => {
         const firstBatch = p?.batches[0];
         return {
@@ -121,6 +122,14 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
     const activeFieldRef = useRef<HTMLInputElement | null>(null);
 
     const numericFields = ['purchasePrice', 'salePrice', 'itemsPerPackage', 'lotNumber', 'stockPackages', 'stockUnits'];
+
+    // Check for duplicate lot number in entire database
+    const isLotDuplicate = useMemo(() => {
+        if (product) return false; // Don't check for duplicates when editing general info
+        const lot = formData.lotNumber.trim();
+        if (!lot) return false;
+        return products.some(p => p.batches.some(b => b.lotNumber === lot));
+    }, [formData.lotNumber, products, product]);
     
     useEffect(() => {
         const itemsPerPack = Number(formData.itemsPerPackage) || 1;
@@ -163,18 +172,10 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
             };
 
             recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-                console.error("Speech recognition error", event.error);
-                if (event.error === 'not-allowed') {
-                    setMicError('دسترسی میکروفون مسدود است. لطفاً از تنظیمات مرورگر دسترسی را مجاز کنید.');
-                } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-                     setMicError('خطایی در تشخیص گفتار رخ داد.');
-                }
+                if (event.error === 'not-allowed') setMicError('دسترسی میکروفون مسدود است.');
+                setIsListening(false);
             };
-            
-            recognition.onend = () => {
-                if(isListening) setIsListening(false);
-            }
-            
+            recognition.onend = () => setIsListening(false);
             recognitionRef.current = recognition;
         }
     }, []);
@@ -186,66 +187,31 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
     }, [recognitionLang]);
 
     const toggleListening = async () => {
-        if (!recognitionRef.current) {
-            setMicError("مرورگر شما از قابلیت تشخیص گفتار پشتیبانی نمی‌کند.");
-            return;
-        }
-
+        if (!recognitionRef.current) return;
         setMicError(''); 
-
         if (isListening) {
             recognitionRef.current.stop();
-            setIsListening(false);
-            return;
-        }
-
-        try {
-            const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-            if (permissionStatus.state === 'granted' || permissionStatus.state === 'prompt') {
+        } else {
+            try {
                 recognitionRef.current.start();
                 setIsListening(true);
-            } else if (permissionStatus.state === 'denied') {
-                setMicError('دسترسی میکروفون مسدود است. لطفاً روی آیکون قفل/دوربین در نوار آدرس کلیک کرده و دسترسی را مجاز کنید.');
-            }
-        } catch (e) {
-            console.error("Error checking microphone permissions:", e);
-            setMicError("خطایی در بررسی دسترسی میکروفون رخ داد.");
+            } catch (e) { setMicError("خطا در دسترسی به میکروفون."); }
         }
     };
 
 
-    const toggleLanguage = () => {
-        setRecognitionLang(prev => {
-            const newLang = prev === 'fa-IR' ? 'en-US' : 'fa-IR';
-            if (recognitionRef.current) {
-                recognitionRef.current.lang = newLang;
-            }
-            return newLang;
-        });
-    };
+    const toggleLanguage = () => setRecognitionLang(prev => prev === 'fa-IR' ? 'en-US' : 'fa-IR');
     
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
-        
         let processedValue = value;
-        
-        // STRICT INTEGERS: itemsPerPackage, lotNumber
         if (['itemsPerPackage', 'lotNumber'].includes(name)) {
             processedValue = value.replace(/[^0-9]/g, '');
-        }
-        // DECIMALS ALLOWED: purchasePrice, salePrice
-        else if (['purchasePrice', 'salePrice'].includes(name)) {
-            // Allow digits and dot, remove others
+        } else if (['purchasePrice', 'salePrice'].includes(name)) {
             processedValue = value.replace(/[^0-9.]/g, '');
-            
-            // Prevent more than one dot
-            if ((processedValue.match(/\./g) || []).length > 1) {
-                return; // Ignore input if it attempts to add a second dot
-            }
+            if ((processedValue.match(/\./g) || []).length > 1) return;
         }
-
         setFormData(prev => ({ ...prev, [name]: processedValue }));
-
         if (errors[name]) {
             setErrors(prev => { const newErrors = { ...prev }; delete newErrors[name]; return newErrors; });
         }
@@ -255,62 +221,45 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
         const packages = Number(packagesStr) || 0;
         const units = Number(unitsStr) || 0;
         const itemsPerPack = Number(formData.itemsPerPackage) || 1;
-        const total = parseToTotalUnits(packages, units, itemsPerPack);
-        setFormData(prev => ({ ...prev, stock: total }));
+        setFormData(prev => ({ ...prev, stock: parseToTotalUnits(packages, units, itemsPerPack) }));
     };
 
     
     const validate = () => {
         const newErrors: { [key: string]: string } = {};
         if (!formData.name.trim()) newErrors.name = "نام محصول اجباری است";
-        if (!formData.purchasePrice || Number(formData.purchasePrice) <= 0) newErrors.purchasePrice = "قیمت خرید باید بزرگتر از صفر باشد";
-        if (!formData.salePrice || Number(formData.salePrice) <= 0) newErrors.salePrice = "قیمت فروش باید بزرگتر از صفر باشد";
-        if (formData.stock < 0) newErrors.stock = "موجودی نمی‌تواند منفی باشد";
+        if (!formData.purchasePrice || Number(formData.purchasePrice) <= 0) newErrors.purchasePrice = "قیمت خرید نامعتبر است";
+        if (!formData.salePrice || Number(formData.salePrice) <= 0) newErrors.salePrice = "قیمت فروش نامعتبر است";
         if (!formData.lotNumber.trim()) newErrors.lotNumber = "شماره لات اجباری است";
+        if (isLotDuplicate) newErrors.lotNumber = "این شماره لات قبلاً در سیستم ثبت شده است";
         
         if (formData.expiryDate) {
             const todayStr = new Date().toISOString().split('T')[0];
-            if (formData.expiryDate < todayStr) {
-                newErrors.expiryDate = "تاریخ انقضا نمی‌تواند در گذشته باشد";
-            }
+            if (formData.expiryDate < todayStr) newErrors.expiryDate = "تاریخ انقضا در گذشته است";
         }
-        
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
     };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (isListening && recognitionRef.current) {
-            recognitionRef.current.stop();
-        }
         if (validate()) {
             const productData: ProductFormData = {
                 name: formData.name.trim(),
-                // Changed: Removed Math.round to allow decimals
                 salePrice: Number(formData.salePrice), 
                 itemsPerPackage: formData.itemsPerPackage ? Number(formData.itemsPerPackage) : 1,
                 barcode: formData.barcode?.trim() || undefined,
                 manufacturer: formData.manufacturer?.trim() || undefined,
             };
             const firstBatchData: FirstBatchData = {
-                // Changed: Removed Math.round to allow decimals
                 purchasePrice: Number(formData.purchasePrice),
                 stock: Number(formData.stock),
                 lotNumber: formData.lotNumber.trim(),
                 purchaseDate: new Date().toISOString(),
                 expiryDate: formData.expiryDate || undefined,
             }
-            // onSave expects different signatures for new vs edit
             if (product) {
-                // For editing, we pass a full product object. The logic is in AppContext
-                const updatedProduct = {
-                    ...product,
-                    ...productData,
-                    // Note: This modal doesn't edit batches, only general info.
-                    // The AppContext update function should handle this gracefully.
-                }
-                onSave(updatedProduct, firstBatchData); // A bit of a hack, needs to be handled in parent
+                onSave({ ...product, ...productData }, firstBatchData);
             } else {
                  onSave(productData, firstBatchData);
             }
@@ -321,125 +270,64 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
     const handleKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            const form = formRef.current;
-            if (!form) return;
-    
-            const focusable = Array.from(
-                form.querySelectorAll('input:not([disabled]), button[type="submit"]')
-            ).filter(el => (el as HTMLElement).offsetParent !== null);
-    
+            const focusable = Array.from(formRef.current?.querySelectorAll('input:not([disabled]), button[type="submit"]') || []) as HTMLElement[];
             const currentIndex = focusable.indexOf(e.target as HTMLElement);
-    
-            const nextIndex = currentIndex + 1;
-            if (nextIndex < focusable.length) {
-                (focusable[nextIndex] as HTMLElement).focus();
-            } else {
-                 // FIX: The `handleSubmit` function expects a FormEvent, but was being called with a
-                 // KeyboardEvent. This satisfies the type system by casting through `unknown`.
-                 handleSubmit(e as unknown as React.FormEvent); 
-            }
+            if (currentIndex > -1 && currentIndex < focusable.length - 1) focusable[currentIndex + 1].focus();
+            else handleSubmit(e as any);
         }
     };
     
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 modal-animate">
-             <style>{`
-                @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
-                .listening-pulse { animation: pulse 1.5s infinite ease-in-out; }
-            `}</style>
-            <div className="bg-white/80 backdrop-blur-xl p-8 rounded-2xl shadow-2xl border border-gray-200/80 w-full max-w-2xl">
+            <div className="bg-white/80 backdrop-blur-xl p-6 md:p-8 rounded-2xl shadow-2xl border border-gray-200/80 w-full max-w-2xl">
                 <div className="flex justify-between items-center pb-4 border-b border-slate-200">
                     <div className="flex items-center space-x-3 space-x-reverse">
-                        <h2 className="text-2xl font-bold text-slate-800">{product ? 'ویرایش محصول' : 'افزودن محصول جدید'}</h2>
-                        <button type="button" onClick={toggleListening} className={`p-2 rounded-full transition-colors ${isListening ? 'bg-red-500 text-white listening-pulse' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>
+                        <h2 className="text-xl md:text-2xl font-bold text-slate-800">{product ? 'ویرایش محصول' : 'افزودن محصول جدید'}</h2>
+                        <button type="button" onClick={toggleListening} className={`p-2 rounded-full transition-colors ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>
                             <MicIcon className="w-5 h-5" />
                         </button>
-                        <button type="button" onClick={toggleLanguage} className="px-3 py-1.5 text-sm font-semibold rounded-lg bg-slate-200 text-slate-600 hover:bg-slate-300 transition-colors">
+                        <button type="button" onClick={toggleLanguage} className="px-2.5 py-1 text-xs font-bold rounded bg-slate-200 text-slate-600">
                             {recognitionLang === 'fa-IR' ? 'FA' : 'EN'}
                         </button>
                     </div>
-                    <button onClick={onClose} className="p-1 rounded-full text-slate-500 hover:bg-slate-200/50 transition-colors"><XIcon /></button>
+                    <button onClick={onClose} className="p-1 rounded-full text-slate-500 hover:bg-slate-200/50"><XIcon /></button>
                 </div>
 
-                {micError && (
-                    <div className="flex items-center justify-center text-red-700 bg-red-100/80 text-md p-3 rounded-md mt-4 text-center">
-                        <WarningIcon className="w-5 h-5 ml-2 text-red-600" />
-                        <span>{micError}</span>
-                    </div>
-                )}
+                {micError && <div className="mt-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg flex items-center gap-2"><WarningIcon className="w-5 h-5" /> {micError}</div>}
 
-                <form ref={formRef} onSubmit={handleSubmit} onFocusCapture={(e) => { activeFieldRef.current = e.target as unknown as HTMLInputElement; }} className="space-y-5 mt-6 max-h-[70vh] overflow-y-auto pr-2">
+                <form ref={formRef} onSubmit={handleSubmit} onFocusCapture={(e) => { activeFieldRef.current = e.target as any; }} className="space-y-5 mt-6 max-h-[70vh] overflow-y-auto pr-2">
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <FormInput label="نام محصول" id="name" name="name" type="text" value={formData.name} onChange={handleInputChange} onInput={handleInputChange} placeholder="مثال: خودکار آبی بیک" required error={errors.name} onKeyDown={handleKeyDown} />
-                        <FormInput label="شماره لات اولیه" id="lotNumber" name="lotNumber" type="text" value={formData.lotNumber} onChange={handleInputChange} onInput={handleInputChange} placeholder="مثال: L-12345" required error={errors.lotNumber} onKeyDown={handleKeyDown} disabled={!!product} />
+                        <FormInput label="نام محصول" id="name" name="name" type="text" value={formData.name} onChange={handleInputChange} placeholder="مثال: خودکار آبی بیک" required error={errors.name} onKeyDown={handleKeyDown} />
+                        <FormInput label="شماره لات اولیه" id="lotNumber" name="lotNumber" type="text" value={formData.lotNumber} onChange={handleInputChange} placeholder="مثال: 450" required error={errors.lotNumber || (isLotDuplicate ? 'شماره لات تکراری است' : '')} onKeyDown={handleKeyDown} disabled={!!product} />
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                       <FormInput label="قیمت خرید اولیه" id="purchasePrice" name="purchasePrice" type="text" inputMode="decimal" value={formData.purchasePrice} onChange={handleInputChange} onInput={handleInputChange} required error={errors.purchasePrice} onKeyDown={handleKeyDown} disabled={!!product} />
-                       <FormInput label="قیمت فروش" id="salePrice" name="salePrice" type="text" inputMode="decimal" value={formData.salePrice} onChange={handleInputChange} onInput={handleInputChange} required error={errors.salePrice} onKeyDown={handleKeyDown} />
+                       <FormInput label="قیمت خرید" id="purchasePrice" name="purchasePrice" type="text" inputMode="decimal" value={formData.purchasePrice} onChange={handleInputChange} required error={errors.purchasePrice} onKeyDown={handleKeyDown} disabled={!!product} />
+                       <FormInput label="قیمت فروش" id="salePrice" name="salePrice" type="text" inputMode="decimal" value={formData.salePrice} onChange={handleInputChange} required error={errors.salePrice} onKeyDown={handleKeyDown} />
                     </div>
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                        <FormInput label="تعداد در بسته" id="itemsPerPackage" name="itemsPerPackage" type="text" inputMode="numeric" value={formData.itemsPerPackage} onChange={handleInputChange} onInput={handleInputChange} placeholder="مثال: 12" onKeyDown={handleKeyDown} />
-                        <FormInput
-                            label="موجودی اولیه (بسته)"
-                            id="stockPackages"
-                            name="stockPackages"
-                            type="text"
-                            inputMode="numeric"
-                            value={stockPackages}
-                            onInput={(e) => {
-                                const val = (e.target as HTMLInputElement).value.replace(/[^0-9]/g, '');
-                                setStockPackages(val);
-                                handleStockChange(val, stockUnits);
-                            }}
-                            onChange={(e) => {
-                                const val = e.target.value.replace(/[^0-9]/g, '');
-                                setStockPackages(val);
-                                handleStockChange(val, stockUnits);
-                            }}
-                            disabled={Number(formData.itemsPerPackage) <= 1 || !!product}
-                            onKeyDown={handleKeyDown}
-                             error={errors.stock}
-                        />
-                        <FormInput
-                            label="موجودی اولیه (عدد)"
-                            id="stockUnits"
-                            name="stockUnits"
-                            type="text"
-                            inputMode="numeric"
-                            value={stockUnits}
-                             onInput={(e) => {
-                                const val = (e.target as HTMLInputElement).value.replace(/[^0-9]/g, '');
-                                setStockUnits(val);
-                                handleStockChange(stockPackages, val);
-                            }}
-                            onChange={(e) => {
-                                const val = e.target.value.replace(/[^0-9]/g, '');
-                                setStockUnits(val);
-                                handleStockChange(stockPackages, val);
-                            }}
-                            disabled={!!product}
-                            onKeyDown={handleKeyDown}
-                        />
+                        <FormInput label="تعداد در بسته" id="itemsPerPackage" name="itemsPerPackage" type="text" inputMode="numeric" value={formData.itemsPerPackage} onChange={handleInputChange} placeholder="مثال: 12" onKeyDown={handleKeyDown} />
+                        <FormInput label="موجودی (بسته)" id="stockPackages" name="stockPackages" type="text" inputMode="numeric" value={stockPackages} onInput={(e: any) => { const v = e.target.value.replace(/[^0-9]/g, ''); setStockPackages(v); handleStockChange(v, stockUnits); }} disabled={Number(formData.itemsPerPackage) <= 1 || !!product} onKeyDown={handleKeyDown} error={errors.stock} />
+                        <FormInput label="موجودی (عدد)" id="stockUnits" name="stockUnits" type="text" inputMode="numeric" value={stockUnits} onInput={(e: any) => { const v = e.target.value.replace(/[^0-9]/g, ''); setStockUnits(v); handleStockChange(stockPackages, v); }} disabled={!!product} onKeyDown={handleKeyDown} />
                     </div>
 
                     <div className="border-t border-slate-200 pt-4">
-                        <button type="button" onClick={() => setIsDetailsOpen(!isDetailsOpen)} className="w-full flex justify-between items-center text-slate-700 font-semibold rounded-md p-2 hover:bg-slate-100/50 transition-colors">
-                            <span>افزودن جزئیات بیشتر</span>
+                        <button type="button" onClick={() => setIsDetailsOpen(!isDetailsOpen)} className="w-full flex justify-between items-center text-slate-700 font-semibold p-2 hover:bg-slate-100/50 rounded-lg transition-colors">
+                            <span>افزودن جزئیات بیشتر (انقضا، بارکد)</span>
                             <ChevronDownIcon className={`w-5 h-5 transition-transform duration-300 ${isDetailsOpen ? 'rotate-180' : ''}`} />
                         </button>
                         {isDetailsOpen && (
-                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-5">
-                                <FormInput label="کد محصول (بارکد)" id="barcode" name="barcode" type="text" value={formData.barcode} onChange={handleInputChange} onInput={handleInputChange} placeholder="اسکن یا وارد کنید" onKeyDown={handleKeyDown} />
-                                <FormInput label="شرکت سازنده" id="manufacturer" name="manufacturer" type="text" value={formData.manufacturer} onChange={handleInputChange} onInput={handleInputChange} onKeyDown={handleKeyDown} />
-                                <FormInput label="تاریخ انقضا (اولیه)" id="expiryDate" name="expiryDate" type="date" value={formData.expiryDate} onChange={handleInputChange} onInput={handleInputChange} onKeyDown={handleKeyDown} error={errors.expiryDate} disabled={!!product}/>
+                            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-5 animate-fade-in">
+                                <FormInput label="کد محصول (بارکد)" id="barcode" name="barcode" type="text" value={formData.barcode} onChange={handleInputChange} placeholder="اسکن بارکد" onKeyDown={handleKeyDown} />
+                                <FormInput label="شرکت سازنده" id="manufacturer" name="manufacturer" type="text" value={formData.manufacturer} onChange={handleInputChange} onKeyDown={handleKeyDown} />
+                                <FormInput label="تاریخ انقضا" id="expiryDate" name="expiryDate" type="date" value={formData.expiryDate} onChange={handleInputChange} onKeyDown={handleKeyDown} error={errors.expiryDate} disabled={!!product}/>
                             </div>
                         )}
                     </div>
 
-                    <div className="flex justify-end space-x-3 space-x-reverse pt-5 border-t border-slate-200">
-                        <button type="button" onClick={onClose} className="px-6 py-3 rounded-lg text-slate-700 bg-slate-200/70 hover:bg-slate-300/70 transition-colors font-semibold">انصراف</button>
-                        <button type="submit" className="px-8 py-3 rounded-lg bg-blue-600 text-white btn-primary font-semibold">ذخیره</button>
+                    <div className="flex justify-end space-x-3 space-x-reverse pt-5 border-t">
+                        <button type="button" onClick={onClose} className="px-6 py-3 rounded-lg text-slate-700 bg-slate-100 hover:bg-slate-200 font-semibold">انصراف</button>
+                        <button type="submit" disabled={isLotDuplicate} className={`px-8 py-3 rounded-lg text-white font-semibold transition-all ${isLotDuplicate ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 btn-primary'}`}>ذخیره</button>
                     </div>
                 </form>
             </div>

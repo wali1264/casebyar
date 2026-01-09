@@ -22,14 +22,12 @@ const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({ person, trans
     
     const title = type === 'supplier' ? 'رسید پرداخت وجه' : 'رسید دریافت وجه';
     const partyLabel = type === 'supplier' ? 'پرداخت شده به' : 'دریافت شده از';
-    
-    // Safe access for deleted persons
     const personName = person ? person.name : 'حساب حذف شده';
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center z-[120] p-4 md:pt-20 overflow-y-auto">
             <div className="bg-white p-6 md:p-10 rounded-2xl shadow-2xl w-full max-w-2xl h-fit overflow-hidden my-auto md:my-0">
-                <div id="print-modal-content" className="text-gray-900 font-sans flex-grow">
+                <div className="printable-area text-gray-900 font-sans flex-grow">
                     <div className="text-center mb-6 border-b pb-4">
                         <h1 className="text-2xl font-black text-slate-800">{storeSettings.storeName}</h1>
                         <p className="text-xs text-slate-500 font-medium">{storeSettings.address}</p>
@@ -62,8 +60,8 @@ const ReceiptPreviewModal: React.FC<ReceiptPreviewModalProps> = ({ person, trans
                     </div>
                 </div>
                 <div className="flex justify-end space-x-3 space-x-reverse mt-10 pt-6 border-t border-slate-100 no-print">
-                    <button onClick={onClose} className="px-6 py-3 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all font-bold">بستن</button>
-                    <button onClick={handlePrint} className="px-8 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 shadow-xl shadow-blue-100 btn-primary font-black active:scale-95 transition-all">چاپ نهایی رسید</button>
+                    <button onClick={onClose} className="px-6 py-3 rounded-xl bg-slate-100 text-slate-700 font-bold">بستن</button>
+                    <button onClick={handlePrint} className="px-8 py-3 rounded-xl bg-blue-600 text-white shadow-xl shadow-blue-100 btn-primary font-black active:scale-95 transition-all">چاپ نهایی رسید</button>
                 </div>
             </div>
         </div>

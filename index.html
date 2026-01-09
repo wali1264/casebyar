@@ -147,11 +147,11 @@
       body * {
         visibility: hidden;
       }
-      #print-modal-content, 
-      #print-modal-content * {
+      .printable-area, 
+      .printable-area * {
         visibility: visible !important;
       }
-      #print-modal-content {
+      .printable-area {
         position: absolute !important;
         left: 0 !important;
         top: 0 !important;
@@ -165,11 +165,11 @@
         box-shadow: none !important;
         border: none !important;
       }
-      #print-modal-content [class*="overflow-"],
-      #print-modal-content [class*="max-h-"],
-      #print-modal-content [class*="min-h-"],
-      #print-modal-content [class*="h-"],
-      #print-modal-content .flex-grow {
+      .printable-area [class*="overflow-"],
+      .printable-area [class*="max-h-"],
+      .printable-area [class*="min-h-"],
+      .printable-area [class*="h-"],
+      .printable-area .flex-grow {
         overflow: visible !important;
         max-height: none !important;
         height: auto !important;
@@ -225,19 +225,6 @@
 <body>
   <div id="root"></div>
   <script type="module" src="./index.tsx"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-          .then(registration => {
-            console.log('SW registered successfully:', registration.scope);
-          })
-          .catch(err => {
-            console.error('SW registration failed:', err);
-          });
-      });
-    }
-  </script>
 <script type="module" src="/index.tsx"></script>
 </body>
 </html>
