@@ -123,13 +123,14 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
 
     const numericFields = ['purchasePrice', 'salePrice', 'itemsPerPackage', 'lotNumber', 'stockPackages', 'stockUnits'];
 
-    // Check for duplicate lot number in entire database
-    const isLotDuplicate = useMemo(() => {
-        if (product) return false; // Don't check for duplicates when editing general info
-        const lot = formData.lotNumber.trim();
-        if (!lot) return false;
-        return products.some(p => p.batches.some(b => b.lotNumber === lot));
-    }, [formData.lotNumber, products, product]);
+    // Intelligence: Check for duplicate product name
+    const isNameDuplicate = useMemo(() => {
+        const currentName = formData.name.trim();
+        if (!currentName) return false;
+        // If editing, exclude current product from search
+        return products.some(p => p.id !== product?.id && p.name.trim() === currentName);
+    }, [formData.name, products, product]);
+
     
     useEffect(() => {
         const itemsPerPack = Number(formData.itemsPerPackage) || 1;
@@ -228,10 +229,10 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
     const validate = () => {
         const newErrors: { [key: string]: string } = {};
         if (!formData.name.trim()) newErrors.name = "نام محصول اجباری است";
+        if (isNameDuplicate) newErrors.name = "محصولی با این نام قبلاً ثبت شده است";
         if (!formData.purchasePrice || Number(formData.purchasePrice) <= 0) newErrors.purchasePrice = "قیمت خرید نامعتبر است";
         if (!formData.salePrice || Number(formData.salePrice) <= 0) newErrors.salePrice = "قیمت فروش نامعتبر است";
         if (!formData.lotNumber.trim()) newErrors.lotNumber = "شماره لات اجباری است";
-        if (isLotDuplicate) newErrors.lotNumber = "این شماره لات قبلاً در سیستم ثبت شده است";
         
         if (formData.expiryDate) {
             const todayStr = new Date().toISOString().split('T')[0];
@@ -297,8 +298,31 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
 
                 <form ref={formRef} onSubmit={handleSubmit} onFocusCapture={(e) => { activeFieldRef.current = e.target as any; }} className="space-y-5 mt-6 max-h-[70vh] overflow-y-auto pr-2">
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <FormInput label="نام محصول" id="name" name="name" type="text" value={formData.name} onChange={handleInputChange} placeholder="مثال: خودکار آبی بیک" required error={errors.name} onKeyDown={handleKeyDown} />
-                        <FormInput label="شماره لات اولیه" id="lotNumber" name="lotNumber" type="text" value={formData.lotNumber} onChange={handleInputChange} placeholder="مثال: 450" required error={errors.lotNumber || (isLotDuplicate ? 'شماره لات تکراری است' : '')} onKeyDown={handleKeyDown} disabled={!!product} />
+                        <FormInput 
+                            label="نام محصول" 
+                            id="name" 
+                            name="name" 
+                            type="text" 
+                            value={formData.name} 
+                            onChange={handleInputChange} 
+                            placeholder="مثال: خودکار آبی بیک" 
+                            required 
+                            error={errors.name} 
+                            onKeyDown={handleKeyDown} 
+                        />
+                        <FormInput 
+                            label="شماره لات اولیه" 
+                            id="lotNumber" 
+                            name="lotNumber" 
+                            type="text" 
+                            value={formData.lotNumber} 
+                            onChange={handleInputChange} 
+                            placeholder="مثال: 1" 
+                            required 
+                            error={errors.lotNumber} 
+                            onKeyDown={handleKeyDown} 
+                            disabled={!!product} 
+                        />
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -327,7 +351,13 @@ const ProductModal: React.FC<ProductModalProps> = ({ product, onClose, onSave })
 
                     <div className="flex justify-end space-x-3 space-x-reverse pt-5 border-t">
                         <button type="button" onClick={onClose} className="px-6 py-3 rounded-lg text-slate-700 bg-slate-100 hover:bg-slate-200 font-semibold">انصراف</button>
-                        <button type="submit" disabled={isLotDuplicate} className={`px-8 py-3 rounded-lg text-white font-semibold transition-all ${isLotDuplicate ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 btn-primary'}`}>ذخیره</button>
+                        <button 
+                            type="submit" 
+                            disabled={isNameDuplicate}
+                            className={`px-8 py-3 rounded-lg text-white font-semibold transition-all ${isNameDuplicate ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 btn-primary'}`}
+                        >
+                            ذخیره
+                        </button>
                     </div>
                 </form>
             </div>
