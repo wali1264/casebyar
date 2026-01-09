@@ -24,7 +24,6 @@ const ReturnModal: React.FC<{ invoice: PurchaseInvoice, onClose: () => void, onS
     const [returnQuantities, setReturnQuantities] = useState<{[key: string]: number}>({});
 
     const handleQuantityChange = (productId: string, lotNumber: string, quantity: number) => {
-        // Use a safe separator '|' instead of '-' to avoid splitting UUIDs incorrectly
         const key = `${productId}|${lotNumber}`;
         setReturnQuantities(prev => ({...prev, [key]: quantity}));
     };
@@ -248,8 +247,8 @@ const Purchases: React.FC = () => {
     const handleAddItem = (product: Product) => {
         const newItem: PurchaseItemDraft = {
             productId: product.id,
-            quantity: 0,
-            purchasePrice: 0,
+            quantity: '',
+            purchasePrice: '',
             lotNumber: '',
             expiryDate: '',
             showExpiry: false,
@@ -273,7 +272,7 @@ const Purchases: React.FC = () => {
     };
 
     const totalAmount = useMemo(() => {
-        const rawTotal = items.reduce((total, item) => total + (Number(item.purchasePrice) * Number(item.quantity)), 0);
+        const rawTotal = items.reduce((total, item) => total + (Number(item.purchasePrice || 0) * Number(item.quantity || 0)), 0);
         if (currency === 'USD') {
             const rate = Number(exchangeRate) || 1;
             return Math.round(rawTotal * rate);
@@ -297,6 +296,31 @@ const Purchases: React.FC = () => {
         });
     }, [purchaseInvoices, dateRange]);
 
+    // Validation logic for Serial (Lot) Numbers
+    const lotValidations = useMemo(() => {
+        return items.map((item, idx) => {
+            const lot = item.lotNumber.trim();
+            if (!lot) return { isDuplicate: false, isEmpty: true };
+            
+            // Check for duplicates within the current invoice draft
+            const internalDuplicate = items.some((other, oIdx) => oIdx !== idx && other.lotNumber.trim() === lot);
+            
+            // Check for duplicates in the existing products (database)
+            const externalDuplicate = products.some(p => p.batches.some(b => b.lotNumber === lot));
+
+            // Note: If editing, exclude the original invoice's own lot numbers from external check
+            let trulyExternal = externalDuplicate;
+            if (editingPurchaseInvoiceId) {
+                const originalInvoice = purchaseInvoices.find(i => i.id === editingPurchaseInvoiceId);
+                const wasOriginallyThisLot = originalInvoice?.items.some(oi => oi.lotNumber === lot && oi.productId === item.productId);
+                if (wasOriginallyThisLot) trulyExternal = false;
+            }
+
+            return { isDuplicate: internalDuplicate || trulyExternal, isEmpty: false };
+        });
+    }, [items, products, editingPurchaseInvoiceId, purchaseInvoices]);
+
+    const hasAnyValidationError = lotValidations.some(v => v.isDuplicate || v.isEmpty);
 
     const handleSaveInvoice = () => {
         if (items.length === 0) {
@@ -304,17 +328,8 @@ const Purchases: React.FC = () => {
             return;
         }
 
-        // VALIDATION: Empty Lot Numbers
-        if (items.some(item => !item.lotNumber.trim())) {
-            showToast("خطا: شماره لات (سریال) برای تمامی اقلام اجباری است.");
-            return;
-        }
-
-        // VALIDATION: Duplicate Lot Numbers within the same invoice
-        const lotNumbers = items.map(i => i.lotNumber.trim());
-        const hasDuplicates = lotNumbers.some((lot, idx) => lotNumbers.indexOf(lot) !== idx);
-        if (hasDuplicates) {
-            showToast("خطا: شماره لات تکراری در اقلام فاکتور یافت شد.");
+        if (hasAnyValidationError) {
+            showToast("خطا: برخی شماره‌های لات نامعتبر یا تکراری هستند.");
             return;
         }
 
@@ -325,8 +340,8 @@ const Purchases: React.FC = () => {
 
         const finalItems = items.map(draft => ({
             productId: draft.productId,
-            quantity: Number(draft.quantity),
-            purchasePrice: Number(draft.purchasePrice),
+            quantity: Number(draft.quantity || 0),
+            purchasePrice: Number(draft.purchasePrice || 0),
             lotNumber: draft.lotNumber.trim(),
             expiryDate: draft.expiryDate || undefined,
         }));
@@ -347,7 +362,7 @@ const Purchases: React.FC = () => {
         if (!result.success) {
             showToast(result.message);
         } else {
-            showToast("عملیات با موفقیت در صف ثبت قرار گرفت.");
+            showToast("عملیات با موفقیت انجام شد.");
             handleCloseModal();
         }
     };
@@ -562,17 +577,18 @@ const Purchases: React.FC = () => {
                                             </div>
                                         )
                                     }
+                                    const validation = lotValidations[index];
                                     return (
-                                        <div key={item.productId + index} className="bg-white/50 p-3 rounded-lg border">
+                                        <div key={item.productId + index} className={`p-3 rounded-lg border transition-colors ${validation.isDuplicate ? 'bg-red-50 border-red-300' : 'bg-white/50 border-slate-200'}`}>
                                             <div className="flex justify-between items-center mb-2">
                                                 <h4 className="font-semibold text-slate-800 truncate text-md">{product.name}</h4>
-                                                <button onClick={() => handleRemoveItem(index)} className="text-red-500"><TrashIcon className="w-5 h-5"/></button>
+                                                <button onClick={() => handleRemoveItem(index)} className="text-red-500 hover:bg-red-100 p-1 rounded transition-colors"><TrashIcon className="w-5 h-5"/></button>
                                             </div>
                                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                                  <div className="col-span-2 md:col-span-1">
                                                     <label className="text-xs font-semibold text-slate-500">تعداد</label>
                                                     <PackageUnitInput
-                                                        totalUnits={Number(item.quantity)}
+                                                        totalUnits={Number(item.quantity || 0)}
                                                         itemsPerPackage={product.itemsPerPackage || 1}
                                                         onChange={(total) => handleItemChange(index, 'quantity', total)}
                                                     />
@@ -584,11 +600,20 @@ const Purchases: React.FC = () => {
                                                     <input type="text" name="purchasePrice" data-index={index} value={item.purchasePrice} onChange={e => handleItemChange(index, 'purchasePrice', e.target.value)} placeholder="0" className="w-full p-2 bg-white/80 border border-gray-300 rounded-md form-input" />
                                                 </div>
                                                 <div className="col-span-1">
-                                                    <label className="text-xs font-semibold text-slate-500 flex justify-between">
+                                                    <label className={`text-xs font-semibold ${validation.isDuplicate ? 'text-red-600' : 'text-slate-500'} flex justify-between`}>
                                                         <span>شماره لات (سریال)</span>
-                                                        <span className="text-red-500">*</span>
+                                                        <span className="text-red-500 font-bold">*</span>
                                                     </label>
-                                                    <input type="text" name="lotNumber" data-index={index} value={item.lotNumber} onChange={e => handleItemChange(index, 'lotNumber', e.target.value)} placeholder="اجباری" className={`w-full p-2 bg-white/80 border ${!item.lotNumber ? 'border-red-300 animate-pulse' : 'border-gray-300'} rounded-md form-input font-mono`} />
+                                                    <input 
+                                                        type="text" 
+                                                        name="lotNumber" 
+                                                        data-index={index} 
+                                                        value={item.lotNumber} 
+                                                        onChange={e => handleItemChange(index, 'lotNumber', e.target.value)} 
+                                                        placeholder="اجباری" 
+                                                        className={`w-full p-2 bg-white/80 border ${validation.isDuplicate ? 'border-red-500 ring-2 ring-red-100' : 'border-gray-300'} rounded-md form-input font-mono`} 
+                                                    />
+                                                    {validation.isDuplicate && <p className="text-[10px] text-red-600 mt-1 font-bold">این شماره تکراری است!</p>}
                                                 </div>
                                                 <div className="col-span-2 md:col-span-1">
                                                    <label className="text-xs font-semibold text-slate-500">انقضا</label>
@@ -612,7 +637,14 @@ const Purchases: React.FC = () => {
                            </div>
                            <div className="flex w-full md:w-auto space-x-3 space-x-reverse">
                                <button type="button" onClick={handleCloseModal} className="flex-1 px-6 py-3 rounded-lg bg-gray-200 hover:bg-gray-300 transition-colors font-semibold">لغو</button>
-                               <button type="button" onClick={handleSaveInvoice} className="flex-1 px-8 py-3 rounded-lg bg-blue-600 text-white hover:bg-blue-700 shadow-lg transition-all btn-primary font-semibold">{editingPurchaseInvoiceId ? 'بروزرسانی' : 'ذخیره'}</button>
+                               <button 
+                                    type="button" 
+                                    onClick={handleSaveInvoice} 
+                                    disabled={hasAnyValidationError}
+                                    className={`flex-1 px-8 py-3 rounded-lg text-white shadow-lg transition-all font-semibold ${hasAnyValidationError ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 btn-primary'}`}
+                                >
+                                    {editingPurchaseInvoiceId ? 'بروزرسانی' : 'ذخیره نهایی'}
+                                </button>
                            </div>
                         </div>
                     </div>
