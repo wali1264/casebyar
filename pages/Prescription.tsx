@@ -158,17 +158,30 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
   const padInkCanvasRef = useRef<HTMLCanvasElement>(null);
   const [padIsDrawing, setPadIsDrawing] = useState(false);
   const [padHistory, setPadHistory] = useState<string[]>([]);
-  const [padRotation, setPadRotation] = useState(0);
-  const [padZoom, setPadZoom] = useState(1);
+  
+  // Persistent Workspace Settings
+  const [padRotation, setPadRotation] = useState(() => {
+    const saved = localStorage.getItem('tabib_pad_rotation');
+    return saved ? parseInt(saved) : 0;
+  });
+  const [padZoom, setPadZoom] = useState(() => {
+    const saved = localStorage.getItem('tabib_pad_zoom');
+    return saved ? parseFloat(saved) : 1;
+  });
+  const [padToolbarPos, setPadToolbarPos] = useState(() => {
+    const saved = localStorage.getItem('tabib_pad_toolbar_pos');
+    return saved ? JSON.parse(saved) : { x: 100, y: 100 };
+  });
+  
   const [padColor, setPadColor] = useState('#1e3a8a'); 
   const [padTool, setPadTool] = useState<'pen' | 'eraser' | 'idle' | 'type'>('idle');
   const [padPenThickness, setPadPenThickness] = useState(3);
   const [padEraserThickness, setPadEraserThickness] = useState(20);
   const [padThickness, setPadThickness] = useState(3);
   const [activeTypingFieldId, setActiveTypingFieldId] = useState<string | null>(null);
+  const [padError, setPadError] = useState<string | null>(null);
   
   // Floating Lever & Temporal State
-  const [padToolbarPos, setPadToolbarPos] = useState({ x: 20, y: 20 });
   const [isDraggingToolbar, setIsDraggingToolbar] = useState(false);
   const toolbarDragOffset = useRef({ x: 0, y: 0 });
   const [showPadSettings, setShowPadSettings] = useState(false);
@@ -446,11 +459,9 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
     stopCamera();
     setShowDigitalPad(true);
     setPadHistory([]);
-    setPadRotation(0);
-    setPadZoom(1);
     setPadTool('idle'); 
     setPadThickness(padPenThickness); 
-    setPadToolbarPos({ x: (window.innerWidth / 2) - 200, y: (window.innerHeight / 2) - 40 });
+    setPadError(null);
     setTimeout(initPadCanvas, 100);
   };
 
@@ -602,8 +613,8 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
     finalCanvas.toBlob(async (blob) => {
       if (blob) {
         const file = new File([blob], "digital_handwritten_rx.jpg", { type: "image/jpeg" });
-        setShowDigitalPad(false);
         setLoading(true);
+        setPadError(null);
         try {
           const res = await processDigitalPadAI(file);
           const guestRecord: PatientRecord = {
@@ -631,8 +642,11 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
           if (res.diagnosis) setDiagnosis(res.diagnosis);
           if (res.chiefComplaint) setChiefComplaint(res.chiefComplaint);
           if (res.vitals) setVitals(prev => ({ ...prev, ...res.vitals, weight: res.patientWeight || prev.weight }));
+          
+          // Close ONLY on success
+          setShowDigitalPad(false);
         } catch (e) {
-          alert("خطا در تحلیل دست‌خط دیجیتال");
+          setPadError("متأسفانه هوش مصنوعی قادر به واکاوی دست‌خط نبود. لطفاً دوباره تلاش کنید.");
         } finally {
           setLoading(false);
         }
@@ -654,7 +668,10 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
      setPadToolbarPos({ x: clientX - toolbarDragOffset.current.x, y: clientY - toolbarDragOffset.current.y });
   };
 
-  const handleToolbarEnd = () => setIsDraggingToolbar(false);
+  const handleToolbarEnd = () => {
+    setIsDraggingToolbar(false);
+    localStorage.setItem('tabib_pad_toolbar_pos', JSON.stringify(padToolbarPos));
+  };
 
   const triggerSettingsDisplay = () => {
      setShowPadSettings(true);
@@ -1370,7 +1387,7 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
         @keyframes slideUpIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 
         .pad-search-glass {
-           background: rgba(255,255,255,0.9);
+           background: rgba(255, 255, 255, 0.9);
            backdrop-filter: blur(12px);
            border-radius: 1.5rem;
            padding: 6px 12px;
@@ -1423,6 +1440,26 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
            background-color: rgba(59, 130, 246, 0.1) !important;
            border-right: 4px solid #2563eb !important;
         }
+
+        .pad-error-banner {
+          position: absolute;
+          top: 1rem;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 470;
+          background: #ef4444;
+          color: white;
+          padding: 0.75rem 1.5rem;
+          border-radius: 1rem;
+          font-weight: bold;
+          font-size: 0.9rem;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          box-shadow: 0 10px 30px rgba(239, 68, 68, 0.3);
+          animation: slideDownIn 0.3s ease-out;
+        }
+        @keyframes slideDownIn { from { transform: translate(-50%, -20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
       `}</style>
 
       {(loading || isProcessingScribe || isProcessingCC) && (
@@ -1782,6 +1819,15 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
              onMouseMove={handleToolbarMove} onTouchMove={handleToolbarMove}
              onMouseUp={handleToolbarEnd} onTouchEnd={handleToolbarEnd}>
            
+           {/* Fault-Tolerant Error Banner */}
+           {padError && (
+              <div className="pad-error-banner">
+                 <AlertCircle size={18} />
+                 <span>{padError}</span>
+                 <button onClick={() => setPadError(null)} className="ml-2 bg-white/20 p-1 rounded-full hover:bg-white/30"><X size={12}/></button>
+              </div>
+           )}
+
            <div 
               style={{ 
                 left: padToolbarPos.x,
@@ -1871,13 +1917,28 @@ const Prescription: React.FC<PrescriptionProps> = ({ initialRecord }) => {
               <div className={`${padRotation % 180 === 90 ? 'w-[1px] h-6' : 'w-6 h-[1px]'} bg-gray-200`}></div>
 
               <div className={`flex gap-1 ${padRotation % 180 === 90 ? 'flex-row' : 'flex-col'}`}>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadRotation(r => (r + 90) % 360); }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
+                 <button onPointerDown={(e) => { 
+                   e.stopPropagation(); 
+                   const next = (padRotation + 90) % 360;
+                   setPadRotation(next); 
+                   localStorage.setItem('tabib_pad_rotation', next.toString());
+                 }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
                     <RotateCw size={18} />
                  </button>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadZoom(z => Math.max(0.2, z - 0.1)); }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
+                 <button onPointerDown={(e) => { 
+                   e.stopPropagation(); 
+                   const next = Math.max(0.2, padZoom - 0.1);
+                   setPadZoom(next); 
+                   localStorage.setItem('tabib_pad_zoom', next.toString());
+                 }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
                     <ZoomOut size={18} />
                  </button>
-                 <button onPointerDown={(e) => { e.stopPropagation(); setPadZoom(z => Math.min(5, z + 0.1)); }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
+                 <button onPointerDown={(e) => { 
+                   e.stopPropagation(); 
+                   const next = Math.min(5, padZoom + 0.1);
+                   setPadZoom(next); 
+                   localStorage.setItem('tabib_pad_zoom', next.toString());
+                 }} className="p-2 lg:p-3 text-gray-500 hover:text-indigo-600 transition-all">
                     <ZoomIn size={18} />
                  </button>
               </div>
