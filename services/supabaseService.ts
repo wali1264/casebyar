@@ -226,7 +226,6 @@ export const api = {
 
     updateSale: async (invoiceId: string, newInvoiceData: SaleInvoice, stockRestores: {productId: string, quantity: number}[], stockDeductions: {batchId: string, quantity: number}[], customerUpdate?: {id: string, oldAmount: number, newAmount: number, transactionDescription: string}) => {
         await db.putItem(db.STORES.SALE_INVOICES, newInvoiceData);
-        // Restore stock for old invoice items if needed
         for (const restore of stockRestores) {
             const p = await db.getById<Product>(db.STORES.PRODUCTS, restore.productId);
             if (p && p.batches.length > 0) {
@@ -240,7 +239,6 @@ export const api = {
                 const newBalance = customer.balance - customerUpdate.oldAmount + customerUpdate.newAmount;
                 await db.putItem(db.STORES.CUSTOMERS, { ...customer, balance: newBalance });
                 
-                // Update transaction record in customer account
                 const txs = await db.getAll<CustomerTransaction>(db.STORES.CUSTOMER_TX);
                 const existingTx = txs.find(t => t.invoiceId === invoiceId);
                 if (existingTx) {
@@ -248,7 +246,6 @@ export const api = {
                     existingTx.date = new Date().toISOString();
                     await db.putItem(db.STORES.CUSTOMER_TX, existingTx);
                 } else if (customerUpdate.newAmount > 0) {
-                    // Create new credit transaction if it was cash but now is credit
                     const newTx: CustomerTransaction = {
                         id: crypto.randomUUID(),
                         customerId: customerUpdate.id,
@@ -282,7 +279,6 @@ export const api = {
             const customer = await db.getById<Customer>(db.STORES.CUSTOMERS, customerRefund.id);
             if (customer) {
                 await db.putItem(db.STORES.CUSTOMERS, { ...customer, balance: customer.balance - customerRefund.amount });
-                // Create transaction record for return
                 const returnTx: CustomerTransaction = {
                     id: crypto.randomUUID(),
                     customerId: customerRefund.id,
@@ -319,7 +315,6 @@ export const api = {
             if (supplier) {
                 await db.putItem(db.STORES.SUPPLIERS, { ...supplier, balance: supplier.balance - supplierUpdate.oldAmount + supplierUpdate.newAmount });
                 
-                // Update transaction record in supplier account
                 const txs = await db.getAll<SupplierTransaction>(db.STORES.SUPPLIER_TX);
                 const existingTx = txs.find(t => t.invoiceId === invoiceId);
                 if (existingTx) {
@@ -346,7 +341,6 @@ export const api = {
             const supplier = await db.getById<Supplier>(db.STORES.SUPPLIERS, supplierRefund.id);
             if (supplier) {
                 await db.putItem(db.STORES.SUPPLIERS, { ...supplier, balance: supplier.balance - supplierRefund.amount });
-                // Create transaction record for purchase return
                 const returnTx: SupplierTransaction = {
                     id: crypto.randomUUID(),
                     supplierId: supplierRefund.id,
@@ -382,20 +376,41 @@ export const api = {
     },
 
     clearAndRestoreData: async (data: AppState) => {
-        await Promise.all(Object.values(db.STORES).map(s => db.clearStore(s)));
+        // Atomic wipe and restore
+        console.log("Wiping all local stores...");
+        const stores = Object.values(db.STORES);
+        for (const storeName of stores) {
+            await db.clearStore(storeName);
+        }
+
+        console.log("Restoring settings...");
         if (data.storeSettings) await db.putItem(db.STORES.SETTINGS, { ...data.storeSettings, id: 'current' });
-        for (const p of data.products) await db.putItem(db.STORES.PRODUCTS, p);
-        for (const s of data.saleInvoices) await db.putItem(db.STORES.SALE_INVOICES, s);
-        for (const p of data.purchaseInvoices) await db.putItem(db.STORES.PURCHASE_INVOICES, p);
-        for (const c of data.customers) await db.putItem(db.STORES.CUSTOMERS, c);
-        for (const s of data.suppliers) await db.putItem(db.STORES.SUPPLIERS, s);
-        for (const e of data.employees) await db.putItem(db.STORES.EMPLOYEES, e);
-        for (const e of data.expenses) await db.putItem(db.STORES.EXPENSES, e);
-        for (const s of data.services) await db.putItem(db.STORES.SERVICES, s);
-        for (const t of data.customerTransactions) await db.putItem(db.STORES.CUSTOMER_TX, t);
-        for (const t of data.supplierTransactions) await db.putItem(db.STORES.SUPPLIER_TX, t);
-        for (const t of data.payrollTransactions) await db.putItem(db.STORES.PAYROLL_TX, t);
-        for (const a of data.activities) await db.putItem(db.STORES.ACTIVITY, a);
+        
+        console.log("Restoring products...");
+        if (data.products) for (const p of data.products) await db.putItem(db.STORES.PRODUCTS, p);
+        
+        console.log("Restoring invoices...");
+        if (data.saleInvoices) for (const s of data.saleInvoices) await db.putItem(db.STORES.SALE_INVOICES, s);
+        if (data.purchaseInvoices) for (const p of data.purchaseInvoices) await db.putItem(db.STORES.PURCHASE_INVOICES, p);
+        
+        console.log("Restoring entities...");
+        if (data.customers) for (const c of data.customers) await db.putItem(db.STORES.CUSTOMERS, c);
+        if (data.suppliers) for (const s of data.suppliers) await db.putItem(db.STORES.SUPPLIERS, s);
+        if (data.employees) for (const e of data.employees) await db.putItem(db.STORES.EMPLOYEES, e);
+        if (data.expenses) for (const e of data.expenses) await db.putItem(db.STORES.EXPENSES, e);
+        if (data.services) for (const s of data.services) await db.putItem(db.STORES.SERVICES, s);
+        
+        console.log("Restoring transactions...");
+        if (data.customerTransactions) for (const t of data.customerTransactions) await db.putItem(db.STORES.CUSTOMER_TX, t);
+        if (data.supplierTransactions) for (const t of data.supplierTransactions) await db.putItem(db.STORES.SUPPLIER_TX, t);
+        if (data.payrollTransactions) for (const t of data.payrollTransactions) await db.putItem(db.STORES.PAYROLL_TX, t);
+        
+        console.log("Restoring logs and auth...");
+        if (data.activities) for (const a of data.activities) await db.putItem(db.STORES.ACTIVITY, a);
+        if (data.users) for (const u of data.users) await db.putItem(db.STORES.USERS, u);
+        if (data.roles) for (const r of data.roles) await db.putItem(db.STORES.ROLES, r);
+        
+        console.log("Data restore process completed.");
     }
 };
 
