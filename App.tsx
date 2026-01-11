@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Layout, FileText, Settings, Archive, User, Search, Printer, Plus, Save, Move, RotateCw, Upload, Trash2, AlignLeft, AlignCenter, AlignRight, Grid, List, Layers, PlusCircle, ChevronDown, Files, UserPlus, X, ChevronLeft, CheckCircle2, Type, Maximize2, Bell, Pencil, ShieldCheck, Database, Download, FileJson, Key, Check, Lock, LogOut, UserCheck, Shield, Eye, EyeOff, Repeat, Phone, CreditCard, UserCircle } from 'lucide-react';
 import { PaperSize, ContractField, ContractTemplate, TextAlignment, ContractPage, ClientProfile } from './types';
 import { INITIAL_FIELDS } from './constants';
+import ReactDOM from 'react-dom';
 
 const AsraLogo = ({ size = 32 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -55,17 +56,16 @@ const INITIAL_USERS = [
   { id: '1', username: 'admin', password: '12345', roleId: 'admin_role' }
 ];
 
-// --- Print Renderer Component (Enhanced Stability) ---
+// --- Print Renderer Component (Portal based for maximum stability) ---
 const PrintLayout = ({ template, formData }: { template: ContractTemplate, formData: Record<string, string> }) => {
-  // Use first page paper size as global master for the print job
   const masterPaperSize = template.pages[0]?.paperSize || PaperSize.A4;
   const isMasterA4 = masterPaperSize === PaperSize.A4;
   
-  return (
-    <div className="print-only-container">
+  // Create a portal to render outside the main #root
+  return ReactDOM.createPortal(
+    <div className="print-root-layer">
       {template.pages.map((page, index) => {
         const activeFields = page.fields.filter(f => f.isActive);
-        // Only print pages that actually contain data or if it's the required first page
         if (activeFields.length === 0 && index > 0) return null;
 
         return (
@@ -102,7 +102,8 @@ const PrintLayout = ({ template, formData }: { template: ContractTemplate, formD
           </div>
         );
       })}
-    </div>
+    </div>,
+    document.body
   );
 };
 
@@ -740,10 +741,8 @@ export default function App() {
         </div>
       </main>
       
-      {/* PROFESSIONAL PRINT ENGINE (Hidden Layer) */}
-      <div className="print-root-layer">
-        <PrintLayout template={template} formData={formData} />
-      </div>
+      {/* PROFESSIONAL PRINT ENGINE (Portal based) */}
+      <PrintLayout template={template} formData={formData} />
       
       <Toast />
       <style>{`
@@ -751,58 +750,6 @@ export default function App() {
         .custom-scrollbar::-webkit-scrollbar { width: 5px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 20px; }
-        
-        /* NEW STABLE PRINT ENGINE CSS */
-        .print-root-layer { display: none !important; }
-        
-        @media print { 
-          body { 
-            background: white !important; 
-            margin: 0 !important;
-            padding: 0 !important;
-            visibility: hidden; /* Hide everything by default */
-          } 
-          .no-print { display: none !important; }
-          #root { display: none !important; }
-          
-          .print-root-layer { 
-            display: block !important; 
-            visibility: visible !important;
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            height: auto !important;
-          }
-
-          .print-page-unit {
-            display: block !important;
-            position: relative !important;
-            overflow: hidden !important;
-            page-break-after: always !important;
-            margin: 0 auto !important;
-            box-shadow: none !important;
-          }
-
-          .print-field {
-            position: absolute !important;
-            display: flex !important;
-            align-items: center !important;
-            line-height: 1.2 !important;
-            font-family: 'Vazirmatn', sans-serif !important;
-            font-weight: bold !important;
-          }
-
-          .print-text-content {
-            width: 100% !important;
-            word-wrap: break-word !important;
-          }
-
-          @page {
-            margin: 0;
-            size: auto; /* Uses paper size defined in styles */
-          }
-        }
       `}</style>
     </div>
   );
