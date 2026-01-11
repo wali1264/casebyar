@@ -7,11 +7,8 @@ import { INITIAL_FIELDS } from './constants';
 // --- Asra GPS Custom SVG Logo ---
 const AsraLogo = ({ size = 32 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-    {/* Outer Blue Ring */}
     <ellipse cx="50" cy="55" rx="45" ry="15" stroke="#0072BC" strokeWidth="4" />
-    {/* Main Red Pin Body */}
     <path d="M50 85C50 85 80 55 80 35C80 18.4315 66.5685 5 50 5C33.4315 5 20 18.4315 20 35C20 55 50 85 50 85Z" fill="#ED1C24" />
-    {/* Car Icon Silhouette */}
     <path d="M35 45C35 43 37 41 40 40.5L42 37C43 35.5 45 35 47 35H53C55 35 57 35.5 58 37L60 40.5C63 41 65 43 65 45V50C65 51 64 52 63 52H37C36 52 35 51 35 50V45Z" fill="white" />
     <rect x="38" y="47" width="4" height="2" rx="1" fill="#ED1C24" opacity="0.5" />
     <rect x="58" y="47" width="4" height="2" rx="1" fill="#ED1C24" opacity="0.5" />
@@ -19,7 +16,6 @@ const AsraLogo = ({ size = 32 }: { size?: number }) => (
   </svg>
 );
 
-// --- Local Storage Keys ---
 const STORAGE_KEYS = {
   TEMPLATE: 'contract_flow_template_v1',
   CLIENTS: 'contract_flow_clients_v1',
@@ -29,7 +25,6 @@ const STORAGE_KEYS = {
   SESSION: 'contract_flow_session_v1'
 };
 
-// --- Helper for Notifications ---
 const showToast = (message: string) => {
   window.dispatchEvent(new CustomEvent('show-app-toast', { detail: message }));
 };
@@ -46,14 +41,13 @@ const Toast = () => {
   }, []);
   if (!msg) return null;
   return (
-    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-4 rounded-3xl shadow-2xl flex items-center gap-3 z-[1000] animate-in slide-in-from-bottom-10 border border-slate-700 backdrop-blur-xl">
+    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-4 rounded-3xl shadow-2xl flex items-center gap-3 z-[1000] animate-in slide-in-from-bottom-10 border border-slate-700 backdrop-blur-xl no-print">
       <Bell size={18} className="text-blue-400" />
       <span className="font-bold text-sm">{msg}</span>
     </div>
   );
 };
 
-// --- Authentication & Permissions Logic ---
 const INITIAL_ROLES = [
   { 
     id: 'admin_role', 
@@ -66,7 +60,61 @@ const INITIAL_USERS = [
   { id: '1', username: 'admin', password: '12345', roleId: 'admin_role' }
 ];
 
-// --- Sub-components ---
+// --- Print Renderer Component (Highly Precise) ---
+const PrintLayout = ({ template, formData }: { template: ContractTemplate, formData: Record<string, string> }) => {
+  return (
+    <div className="print-only hidden print:block bg-white overflow-visible">
+      {template.pages.map((page, index) => {
+        // Only print pages that have at least one active field being used or if it's the first page
+        const activeFields = page.fields.filter(f => f.isActive);
+        if (activeFields.length === 0 && index > 0) return null;
+
+        const isA4 = page.paperSize === PaperSize.A4;
+        const width = isA4 ? '210mm' : '148mm';
+        const height = isA4 ? '297mm' : '210mm';
+
+        return (
+          <div 
+            key={index} 
+            className="relative overflow-hidden bg-white" 
+            style={{ 
+              width, 
+              height, 
+              pageBreakAfter: 'always',
+              backgroundImage: page.showBackgroundInPrint && page.bgImage ? `url(${page.bgImage})` : 'none',
+              backgroundSize: '100% 100%',
+              backgroundRepeat: 'no-repeat'
+            }}
+          >
+            {activeFields.map((field) => (
+              <div
+                key={field.id}
+                className="absolute flex items-center"
+                style={{
+                  left: `${field.x}%`,
+                  top: `${field.y}%`,
+                  width: `${field.width}px`,
+                  transform: `rotate(${field.rotation}deg)`,
+                  fontSize: `${field.fontSize}px`,
+                  textAlign: field.alignment === 'L' ? 'left' : field.alignment === 'R' ? 'right' : 'center',
+                  justifyContent: field.alignment === 'L' ? 'flex-start' : field.alignment === 'R' ? 'flex-end' : 'center',
+                  fontFamily: 'Vazirmatn, sans-serif',
+                  fontWeight: 'bold',
+                  lineHeight: '1.2'
+                }}
+              >
+                <span className="w-full break-words">
+                  {formData[field.key] || ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const Sidebar = ({ activeTab, setActiveTab, userPermissions, onLogout }: { activeTab: string, setActiveTab: (t: string) => void, userPermissions: string[], onLogout: () => void }) => {
   const menuItems = [
     { id: 'workspace', icon: Layout, label: 'میز کار', perm: 'workspace' },
@@ -162,7 +210,7 @@ const LoginForm = ({ onLogin }: { onLogin: (user: any) => void }) => {
   );
 };
 
-const Workspace = ({ template, editData, onEditCancel, perms }: { template: ContractTemplate, editData?: any, onEditCancel?: () => void, perms: string[] }) => {
+const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormData }: { template: ContractTemplate, editData?: any, onEditCancel?: () => void, perms: string[], formData: Record<string, string>, setFormData: React.Dispatch<React.SetStateAction<Record<string, string>>> }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<ClientProfile[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.CLIENTS);
@@ -171,7 +219,6 @@ const Workspace = ({ template, editData, onEditCancel, perms }: { template: Cont
   const [selectedClient, setSelectedClient] = useState<ClientProfile | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [visiblePages, setVisiblePages] = useState<number[]>([1]);
-  const [formData, setFormData] = useState<Record<string, string>>({});
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
@@ -379,11 +426,10 @@ const Workspace = ({ template, editData, onEditCancel, perms }: { template: Cont
   }
 
   return (
-    <div className="w-full max-w-full mx-auto py-6 px-6 animate-in fade-in duration-500 flex flex-col h-full overflow-hidden">
+    <div className="w-full max-w-full mx-auto py-6 px-6 animate-in fade-in duration-500 flex flex-col h-full overflow-hidden no-print">
       {/* Smart 4-Column Slim Profile Bar */}
       <div className="bg-white rounded-[28px] px-8 py-5 shadow-sm border border-slate-100 mb-6 flex items-center justify-between no-print hover:shadow-md transition-all group w-full">
         <div className="flex-1 grid grid-cols-4 gap-8 items-center">
-            {/* 1. Name */}
             <div className="flex items-center gap-3">
                 <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><UserCircle size={20}/></div>
                 <div className="flex flex-col">
@@ -391,7 +437,6 @@ const Workspace = ({ template, editData, onEditCancel, perms }: { template: Cont
                   <span className="text-2xl font-black text-slate-900 leading-none">{selectedClient.name}</span>
                 </div>
             </div>
-            {/* 2. Father's Name */}
             <div className="flex items-center gap-3">
                 <div className="p-2 bg-slate-50 text-slate-500 rounded-lg"><User size={20}/></div>
                 <div className="flex flex-col">
@@ -399,7 +444,6 @@ const Workspace = ({ template, editData, onEditCancel, perms }: { template: Cont
                   <span className="text-2xl font-black text-slate-900 leading-none">{selectedClient.fatherName}</span>
                 </div>
             </div>
-            {/* 3. ID Card */}
             <div className="flex items-center gap-3">
                 <div className="p-2 bg-slate-50 text-slate-500 rounded-lg"><CreditCard size={20}/></div>
                 <div className="flex flex-col">
@@ -407,7 +451,6 @@ const Workspace = ({ template, editData, onEditCancel, perms }: { template: Cont
                   <span className="text-2xl font-black text-slate-900 leading-none">{selectedClient.tazkira}</span>
                 </div>
             </div>
-            {/* 4. Phone */}
             <div className="flex items-center gap-3">
                 <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><Phone size={20}/></div>
                 <div className="flex flex-col">
@@ -416,10 +459,10 @@ const Workspace = ({ template, editData, onEditCancel, perms }: { template: Cont
                 </div>
             </div>
         </div>
-        <button onClick={resetWorkspace} className="mr-6 p-3 rounded-xl hover:bg-red-50 text-slate-200 hover:text-red-500 transition-all flex-shrink-0"><X size={24}/></button>
+        <button onClick={resetWorkspace} className="mr-6 p-3 rounded-xl hover:bg-red-50 text-slate-200 hover:text-red-500 transition-all flex-shrink-0 no-print"><X size={24}/></button>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-32 space-y-6 custom-scrollbar px-1">
+      <div className="flex-1 overflow-y-auto pb-32 space-y-6 custom-scrollbar px-1 no-print">
         {template.pages.map((page) => {
           const isPageOpen = visiblePages.includes(page.pageNumber);
           const activeFields = page.fields.filter(f => f.isActive);
@@ -458,7 +501,6 @@ const Workspace = ({ template, editData, onEditCancel, perms }: { template: Cont
         })}
       </div>
 
-      {/* Sticky Action Bar */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-5xl px-4 no-print z-50">
         <div className="bg-white/80 backdrop-blur-2xl border border-white/50 p-4 rounded-[32px] shadow-[0_20px_50px_rgba(0,0,0,0.1)] flex flex-wrap gap-3 items-center justify-center">
           <button onClick={() => handleSaveContract(false)} className="flex-1 min-w-[180px] bg-blue-600 text-white py-5 rounded-[24px] font-black text-lg shadow-xl shadow-blue-200 hover:bg-blue-700 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-3">
@@ -480,7 +522,6 @@ const Workspace = ({ template, editData, onEditCancel, perms }: { template: Cont
   );
 };
 
-// --- SETTINGS SUB-COMPONENTS ---
 const UsersManager = () => {
   const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || JSON.stringify(INITIAL_USERS)));
   const [roles, setRoles] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.ROLES) || JSON.stringify(INITIAL_ROLES)));
@@ -534,7 +575,7 @@ const UsersManager = () => {
   };
 
   return (
-    <div className="flex flex-col gap-8 animate-in fade-in zoom-in-95 duration-500 p-8 h-full overflow-y-auto custom-scrollbar">
+    <div className="flex flex-col gap-8 animate-in fade-in zoom-in-95 duration-500 p-8 h-full overflow-y-auto custom-scrollbar no-print">
       <div className="flex items-center gap-4 bg-slate-100 p-1.5 rounded-2xl w-fit">
         <button onClick={() => setSubTab('users')} className={`px-8 py-3 rounded-xl font-black text-sm transition-all ${subTab === 'users' ? 'bg-white shadow-md text-blue-600' : 'text-slate-400'}`}>مدیریت کاربران</button>
         <button onClick={() => setSubTab('roles')} className={`px-8 py-3 rounded-xl font-black text-sm transition-all ${subTab === 'roles' ? 'bg-white shadow-md text-blue-600' : 'text-slate-400'}`}>نقش‌ها و دسترسی</button>
@@ -675,7 +716,7 @@ const BackupManager = () => {
   };
 
   return (
-    <div className="p-12 animate-in fade-in zoom-in-95 h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto">
+    <div className="p-12 animate-in fade-in zoom-in-95 h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto no-print">
       <div className="w-48 h-48 bg-white text-blue-600 rounded-[56px] flex items-center justify-center mb-10 shadow-2xl shadow-blue-100 ring-8 ring-white p-10">
         <AsraLogo size={140} />
       </div>
@@ -697,7 +738,6 @@ const BackupManager = () => {
   );
 };
 
-// --- DESKTOP SETTINGS ---
 const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, setActiveSubTab, onPageChange }: { template: ContractTemplate, setTemplate: (t: any) => void, activePageNum: number, activeSubTab: 'design' | 'fields', setActiveSubTab: (s: 'design' | 'fields') => void, onPageChange: (p: number) => void }) => {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [newField, setNewField] = useState({ label: '', fontSize: 14, width: 150, alignment: 'R' as TextAlignment });
@@ -754,7 +794,7 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-[40px] overflow-hidden border border-slate-100 shadow-2xl animate-in fade-in duration-700">
+    <div className="flex flex-col h-full bg-white rounded-[40px] overflow-hidden border border-slate-100 shadow-2xl animate-in fade-in duration-700 no-print">
       <div className="bg-white/90 backdrop-blur-md border-b px-6 py-4 flex items-center justify-between no-print z-10 sticky top-0">
         <div className="flex items-center gap-3">
            <div className="flex bg-slate-100 p-1 rounded-2xl">
@@ -850,8 +890,8 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
             </div>
           </div>
         </div>
-        <div className="flex-1 bg-slate-200/30 p-8 overflow-auto flex items-start justify-center custom-scrollbar">
-          <div ref={canvasRef} className="bg-white shadow-2xl relative border border-slate-200 transition-all origin-top" style={{ width: activePage.paperSize === PaperSize.A4 ? '595px' : '420px', height: activePage.paperSize === PaperSize.A4 ? '842px' : '595px', backgroundImage: activePage.bgImage ? `url(${activePage.bgImage})` : 'none', backgroundSize: '100% 100%' }}>
+        <div className="flex-1 bg-slate-200/30 p-8 overflow-auto flex items-start justify-center custom-scrollbar no-print">
+          <div ref={canvasRef} className="bg-white shadow-2xl relative border border-slate-200 transition-all origin-top no-print" style={{ width: activePage.paperSize === PaperSize.A4 ? '595px' : '420px', height: activePage.paperSize === PaperSize.A4 ? '842px' : '595px', backgroundImage: activePage.bgImage ? `url(${activePage.bgImage})` : 'none', backgroundSize: '100% 100%' }}>
             {activePage.fields.filter(f => f.isActive).map(f => (
               <div 
                 key={f.id} 
@@ -883,7 +923,6 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
   );
 };
 
-// --- SETTINGS MAIN PANEL ---
 const SettingsPanel = ({ template, setTemplate, userPermissions }: { template: ContractTemplate, setTemplate: (t: any) => void, userPermissions: string[] }) => {
   const [mainTab, setMainTab] = useState<'users' | 'boom' | 'backup'>(() => {
     if (userPermissions.includes('settings_boom')) return 'boom';
@@ -894,7 +933,7 @@ const SettingsPanel = ({ template, setTemplate, userPermissions }: { template: C
   const [activePage, setActivePage] = useState(1);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-40px)] animate-in fade-in duration-500">
+    <div className="flex flex-col h-[calc(100vh-40px)] animate-in fade-in duration-500 no-print">
       <div className="flex items-center justify-center gap-4 py-6 bg-white border-b border-slate-100 no-print">
          {userPermissions.includes('settings_users') && (
             <button onClick={() => setMainTab('users')} className={`flex items-center gap-3 px-8 py-3.5 rounded-[20px] font-black text-sm transition-all ${mainTab === 'users' ? 'bg-slate-900 text-white shadow-xl scale-105' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}><User size={18}/> مدیریت کاربران و نقش‌ها</button>
@@ -907,7 +946,7 @@ const SettingsPanel = ({ template, setTemplate, userPermissions }: { template: C
          )}
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden no-print">
         {mainTab === 'boom' && <div className="h-full"><DesktopSettings template={template} setTemplate={setTemplate} activePageNum={activePage} activeSubTab={activeSubTab} setActiveSubTab={setActiveSubTab} onPageChange={setActivePage} /></div>}
         {mainTab === 'users' && <UsersManager />}
         {mainTab === 'backup' && <BackupManager />}
@@ -928,7 +967,7 @@ const ArchivePanel = ({ onEdit, perms }: { onEdit: (contract: any) => void, perm
   };
 
   return (
-    <div className="max-w-5xl mx-auto py-12 animate-in fade-in zoom-in-95 duration-700">
+    <div className="max-w-5xl mx-auto py-12 animate-in fade-in zoom-in-95 duration-700 no-print">
       <div className="flex justify-between items-center mb-10 px-4">
         <div><h2 className="text-3xl font-black text-slate-800 tracking-tight">بایگانی اسناد صادر شده</h2></div>
         <div className="bg-white p-2 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3 px-6"><Search size={18} className="text-slate-300" /><input type="text" placeholder="جستجوی سریع..." className="outline-none bg-transparent text-sm font-bold w-48" /></div>
@@ -944,7 +983,7 @@ const ArchivePanel = ({ onEdit, perms }: { onEdit: (contract: any) => void, perm
                   <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl font-black">{contract.clientName[0]}</div>
                   <div className="flex gap-2">
                     {perms.includes('archive_edit') && <button onClick={() => onEdit(contract)} className="text-slate-300 hover:text-amber-500 transition-all p-2 bg-slate-50 rounded-xl"><Pencil size={20}/></button>}
-                    {perms.includes('archive_print') && <button className="text-slate-300 hover:text-blue-600 transition-all p-2 bg-slate-50 rounded-xl"><Printer size={20}/></button>}
+                    {perms.includes('archive_print') && <button onClick={() => { onEdit(contract); setTimeout(() => window.print(), 100); }} className="text-slate-300 hover:text-blue-600 transition-all p-2 bg-slate-50 rounded-xl"><Printer size={20}/></button>}
                     {perms.includes('archive_delete') && <button onClick={() => handleDelete(contract.id)} className="text-slate-300 hover:text-red-500 transition-all p-2 bg-slate-50 rounded-xl"><Trash2 size={20}/></button>}
                   </div>
                </div>
@@ -967,6 +1006,7 @@ export default function App() {
   });
   const [activeTab, setActiveTab] = useState('workspace');
   const [editingContract, setEditingContract] = useState<any>(null);
+  const [formData, setFormData] = useState<Record<string, string>>({});
   const [template, setTemplate] = useState<ContractTemplate>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.TEMPLATE);
     if (saved) return JSON.parse(saved);
@@ -1013,23 +1053,41 @@ export default function App() {
         userPermissions={userPermissions} 
         onLogout={handleLogout} 
       />
-      <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
+      <main className="flex-1 flex flex-col h-screen overflow-hidden relative no-print">
         <div className="flex-1 overflow-auto p-0 md:p-5 custom-scrollbar h-full">
-          {activeTab === 'workspace' && <Workspace template={template} editData={editingContract} onEditCancel={() => setEditingContract(null)} perms={userPermissions} />}
+          {activeTab === 'workspace' && <Workspace template={template} editData={editingContract} onEditCancel={() => setEditingContract(null)} perms={userPermissions} formData={formData} setFormData={setFormData} />}
           {activeTab === 'settings' && <SettingsPanel template={template} setTemplate={setTemplate} userPermissions={userPermissions} />}
           {activeTab === 'archive' && <ArchivePanel onEdit={(c) => { setEditingContract(c); setActiveTab('workspace'); }} perms={userPermissions} />}
         </div>
       </main>
+      
+      {/* PROFESSIONAL PRINT ENGINE (Hidden Layer) */}
+      <PrintLayout template={template} formData={formData} />
+      
       <Toast />
       <style>{`
         @font-face { font-family: 'Vazirmatn'; font-display: swap; }
         .custom-scrollbar::-webkit-scrollbar { width: 5px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 20px; }
+        
         @media print { 
-          body { background: white !important; } 
-          .no-print { display: none !important; } 
-          main { display: block !important; overflow: visible !important; }
+          body { 
+            background: white !important; 
+            margin: 0 !important;
+            padding: 0 !important;
+          } 
+          .no-print { display: none !important; }
+          #root > div:not(.print-only) { display: none !important; }
+          .print-only { 
+            display: block !important; 
+            width: 100% !important;
+            margin: 0 !important;
+          }
+          @page {
+            margin: 0;
+            padding: 0;
+          }
         }
       `}</style>
     </div>
