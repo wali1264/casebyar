@@ -15,10 +15,8 @@
             print-color-adjust: exact !important;
         }
         @media print {
-            .no-print { display: none !important; }
-            * { -webkit-print-color-adjust: exact !important; }
+            /* Handled in App.tsx style tag for precise control */
         }
-        /* Custom UI Tweaks */
         input::placeholder { color: #cbd5e1; font-weight: normal; }
     </style>
 <script type="importmap">
