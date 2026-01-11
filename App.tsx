@@ -4,6 +4,7 @@ import { Layout, FileText, Settings, Archive, User, Search, Printer, Plus, Save,
 import { PaperSize, ContractField, ContractTemplate, TextAlignment, ContractPage, ClientProfile } from './types';
 import { INITIAL_FIELDS } from './constants';
 import ReactDOM from 'react-dom';
+import { supabase } from './lib/supabase';
 
 const AsraLogo = ({ size = 32 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -15,15 +16,6 @@ const AsraLogo = ({ size = 32 }: { size?: number }) => (
     <path d="M42 41H58L56 38H44L42 41Z" fill="#ED1C24" opacity="0.3" />
   </svg>
 );
-
-const STORAGE_KEYS = {
-  TEMPLATE: 'contract_flow_template_v1',
-  CLIENTS: 'contract_flow_clients_v1',
-  ARCHIVE: 'contract_flow_archive_v1',
-  USERS: 'contract_flow_users_v2',
-  ROLES: 'contract_flow_roles_v2',
-  SESSION: 'contract_flow_session_v1'
-};
 
 const showToast = (message: string) => {
   window.dispatchEvent(new CustomEvent('show-app-toast', { detail: message }));
@@ -48,20 +40,11 @@ const Toast = () => {
   );
 };
 
-const INITIAL_ROLES = [
-  { id: 'admin_role', name: 'مدیر کل', perms: ['workspace', 'workspace_create', 'workspace_search', 'archive', 'archive_print', 'archive_edit', 'archive_delete', 'settings', 'settings_boom', 'settings_users', 'settings_backup'] }
-];
-
-const INITIAL_USERS = [
-  { id: '1', username: 'admin', password: '12345', roleId: 'admin_role' }
-];
-
-// --- Print Renderer Component (Portal based for maximum stability) ---
+// --- Print Renderer Component ---
 const PrintLayout = ({ template, formData }: { template: ContractTemplate, formData: Record<string, string> }) => {
   const masterPaperSize = template.pages[0]?.paperSize || PaperSize.A4;
   const isMasterA4 = masterPaperSize === PaperSize.A4;
   
-  // Create a portal to render outside the main #root
   return ReactDOM.createPortal(
     <div className="print-root-layer">
       {template.pages.map((page, index) => {
@@ -147,14 +130,24 @@ const Sidebar = ({ activeTab, setActiveTab, userPermissions, onLogout }: { activ
 const LoginForm = ({ onLogin }: { onLogin: (user: any) => void }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
-  const handleSubmit = (e: React.FormEvent) => {
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const users = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || JSON.stringify(INITIAL_USERS));
-    const user = users.find((u: any) => u.username === username && u.password === password);
-    if (user) onLogin(user);
+    setLoading(true);
+    const { data, error: dbError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('username', username)
+      .eq('password', password)
+      .single();
+
+    if (data) onLogin(data);
     else { setError(true); setTimeout(() => setError(false), 2000); }
+    setLoading(false);
   };
+
   return (
     <div className="fixed inset-0 bg-slate-100 flex items-center justify-center p-6 z-[2000]">
       <div className="bg-white w-full max-w-md p-10 rounded-[48px] shadow-2xl border border-white animate-in zoom-in-95 duration-500 text-center">
@@ -173,7 +166,9 @@ const LoginForm = ({ onLogin }: { onLogin: (user: any) => void }) => {
             <input type="password" placeholder="رمز عبور" className="w-full pr-14 pl-6 py-5 bg-slate-50 rounded-[24px] outline-none border-2 border-transparent focus:border-blue-500 focus:bg-white transition-all font-bold text-lg" value={password} onChange={e => setPassword(e.target.value)} />
           </div>
           {error && <p className="text-red-500 font-black text-xs animate-bounce">اطلاعات کاربری اشتباه است</p>}
-          <button className="w-full bg-blue-600 text-white py-6 rounded-[32px] font-black text-xl shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all mt-4">ورود به پنل عملیاتی</button>
+          <button disabled={loading} className="w-full bg-blue-600 text-white py-6 rounded-[32px] font-black text-xl shadow-2xl shadow-blue-100 hover:bg-blue-700 transition-all mt-4 disabled:opacity-50">
+            {loading ? 'در حال تایید...' : 'ورود به پنل عملیاتی'}
+          </button>
         </form>
       </div>
     </div>
@@ -182,23 +177,29 @@ const LoginForm = ({ onLogin }: { onLogin: (user: any) => void }) => {
 
 const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormData }: { template: ContractTemplate, editData?: any, onEditCancel?: () => void, perms: string[], formData: Record<string, string>, setFormData: React.Dispatch<React.SetStateAction<Record<string, string>>> }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [clients, setClients] = useState<ClientProfile[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.CLIENTS);
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [clients, setClients] = useState<ClientProfile[]>([]);
   const [selectedClient, setSelectedClient] = useState<ClientProfile | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [visiblePages, setVisiblePages] = useState<number[]>([1]);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
+    fetchClients();
+  }, []);
+
+  const fetchClients = async () => {
+    const { data } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
+    if (data) setClients(data);
+  };
+
+  useEffect(() => {
     if (editData) {
-      const client = clients.find(c => c.id === editData.clientId);
+      const client = clients.find(c => c.id === editData.client_id || c.id === editData.clientId);
       if (client) {
         setSelectedClient(client);
-        setFormData(editData.formData || {});
+        setFormData(editData.form_data || editData.formData || {});
         const pagesWithData = template.pages
-          .filter(p => p.fields.some(f => editData.formData[f.key]))
+          .filter(p => p.fields.some(f => (editData.form_data || editData.formData)?.[f.key]))
           .map(p => p.pageNumber);
         setVisiblePages(pagesWithData.length > 0 ? pagesWithData : [1]);
       }
@@ -212,34 +213,49 @@ const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormD
     return clients.filter(c => c.name.toLowerCase().includes(lowerSearch) || c.tazkira.toLowerCase().includes(lowerSearch));
   }, [clients, searchTerm, perms]);
 
-  const handleCreateClient = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleCreateClient = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!perms.includes('workspace_create')) { showToast('شما دسترسی ایجاد پرونده ندارید'); return; }
     const data = new FormData(e.currentTarget);
-    const newClient: ClientProfile = { id: Date.now().toString(), name: data.get('name') as string, fatherName: data.get('fatherName') as string, tazkira: data.get('tazkira') as string, phone: data.get('phone') as string, createdAt: new Date().toLocaleDateString('fa-IR') };
+    const newClient = { 
+      id: Date.now().toString(), 
+      name: data.get('name') as string, 
+      father_name: data.get('fatherName') as string, 
+      tazkira: data.get('tazkira') as string, 
+      phone: data.get('phone') as string 
+    };
     if (!newClient.name || !newClient.tazkira) { showToast('لطفاً فیلدهای ضروری را پر کنید'); return; }
-    const updatedClients = [newClient, ...clients];
-    setClients(updatedClients);
-    localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify(updatedClients));
-    setSelectedClient(newClient);
-    setIsModalOpen(false);
-    showToast('پرونده دیجیتال مشتری ایجاد شد');
+    
+    const { error } = await supabase.from('clients').insert([newClient]);
+    if (!error) {
+      await fetchClients();
+      setSelectedClient(newClient as any);
+      setIsModalOpen(false);
+      showToast('پرونده دیجیتال مشتری ایجاد شد');
+    }
   };
 
-  const handleSaveContract = (isExtension: boolean = false) => {
+  const handleSaveContract = async (isExtension: boolean = false) => {
     if (!selectedClient) return;
     if (!perms.includes('workspace_create') && !editData) return;
     if (editData && !perms.includes('archive_edit') && !isExtension) { showToast('دسترسی ویرایش قرارداد را ندارید'); return; }
-    let archive = JSON.parse(localStorage.getItem(STORAGE_KEYS.ARCHIVE) || '[]');
+    
     if (editData && !isExtension) {
-      archive = archive.map((item: any) => item.id === editData.id ? { ...item, formData, timestamp: new Date().toISOString() } : item);
-      showToast('تغییرات قرارداد بروزرسانی شد');
+      const { error } = await supabase.from('contracts').update({ form_data: formData, timestamp: new Date().toISOString() }).eq('id', editData.id);
+      if (!error) showToast('تغییرات قرارداد بروزرسانی شد');
     } else {
-      const newEntry = { id: Date.now().toString(), clientId: selectedClient.id, clientName: selectedClient.name, formData, timestamp: new Date().toISOString(), templateId: template.id, isExtended: isExtension };
-      archive = [newEntry, ...archive];
-      showToast(isExtension ? 'قرارداد تمدید و به عنوان سند جدید ثبت شد' : 'قرارداد با موفقیت در بایگانی ثبت شد');
+      const newEntry = { 
+        id: Date.now().toString(), 
+        client_id: selectedClient.id, 
+        client_name: selectedClient.name, 
+        form_data: formData, 
+        timestamp: new Date().toISOString(), 
+        template_id: template.id, 
+        is_extended: isExtension 
+      };
+      const { error } = await supabase.from('contracts').insert([newEntry]);
+      if (!error) showToast(isExtension ? 'قرارداد تمدید و به عنوان سند جدید ثبت شد' : 'قرارداد با موفقیت در بایگانی ثبت شد');
     }
-    localStorage.setItem(STORAGE_KEYS.ARCHIVE, JSON.stringify(archive));
     resetWorkspace();
   };
 
@@ -288,7 +304,7 @@ const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormD
                       <div>
                         <h4 className="font-black text-xl text-slate-800 mb-1">{client.name}</h4>
                         <div className="flex gap-4 text-sm font-medium text-slate-400">
-                           <span>پدر: {client.fatherName}</span>
+                           <span>پدر: {client.father_name || client.fatherName}</span>
                            <span className="opacity-30">|</span>
                            <span>تذکره: {client.tazkira}</span>
                         </div>
@@ -352,7 +368,7 @@ const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormD
                 <div className="p-2 bg-slate-50 text-slate-500 rounded-lg"><User size={20}/></div>
                 <div className="flex flex-col">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">نام پدر</span>
-                  <span className="text-2xl font-black text-slate-900 leading-none">{selectedClient.fatherName}</span>
+                  <span className="text-2xl font-black text-slate-900 leading-none">{selectedClient.father_name || selectedClient.fatherName}</span>
                 </div>
             </div>
             <div className="flex items-center gap-3">
@@ -424,35 +440,64 @@ const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormD
 };
 
 const UsersManager = () => {
-  const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || JSON.stringify(INITIAL_USERS)));
-  const [roles, setRoles] = useState(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.ROLES) || JSON.stringify(INITIAL_ROLES)));
+  const [users, setUsers] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
   const [subTab, setSubTab] = useState<'users' | 'roles'>('users');
   const [editingUser, setEditingUser] = useState<any>(null);
+  
   const permissionsList = [
     { id: 'workspace', label: 'دسترسی به میز کار', parent: null }, { id: 'workspace_create', label: 'ایجاد پرونده جدید', parent: 'workspace' }, { id: 'workspace_search', label: 'جستجوی مشتریان', parent: 'workspace' }, { id: 'archive', label: 'مشاهده بایگانی', parent: null }, { id: 'archive_print', label: 'چاپ در بایگانی', parent: 'archive' }, { id: 'archive_edit', label: 'ویرایش در بایگانی', parent: 'archive' }, { id: 'archive_delete', label: 'حذف سوابق بایگانی', parent: 'archive' }, { id: 'settings', label: 'دسترسی به تنظیمات', parent: null }, { id: 'settings_boom', label: 'مدیریت بوم طراحی', parent: 'settings' }, { id: 'settings_users', label: 'مدیریت کاربران و نقش‌ها', parent: 'settings' }, { id: 'settings_backup', label: 'پشتیبان‌گیری داده‌ها', parent: 'settings' }
   ];
-  const handleSaveUser = (e: React.FormEvent<HTMLFormElement>) => {
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    const { data: u } = await supabase.from('users').select('*');
+    const { data: r } = await supabase.from('roles').select('*');
+    if (u) setUsers(u);
+    if (r) setRoles(r);
+  };
+
+  const handleSaveUser = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const username = data.get('username') as string;
     const password = data.get('password') as string;
     const roleId = data.get('roleId') as string;
-    let updatedUsers = editingUser ? users.map((u: any) => u.id === editingUser.id ? { ...u, username, password, roleId } : u) : [...users, { id: Date.now().toString(), username, password, roleId }];
-    setUsers(updatedUsers);
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    
+    if (editingUser) {
+      await supabase.from('users').update({ username, password, role_id: roleId }).eq('id', editingUser.id);
+    } else {
+      await supabase.from('users').insert([{ username, password, role_id: roleId }]);
+    }
     setEditingUser(null);
+    fetchData();
     showToast('اطلاعات کاربر ذخیره شد');
   };
-  const handleSaveRole = (e: React.FormEvent<HTMLFormElement>) => {
+
+  const handleSaveRole = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
     const roleName = data.get('roleName') as string;
     const checkedPerms = Array.from(data.getAll('perms') as string[]);
-    const updatedRoles = [...roles, { id: Date.now().toString(), name: roleName, perms: checkedPerms }];
-    setRoles(updatedRoles);
-    localStorage.setItem(STORAGE_KEYS.ROLES, JSON.stringify(updatedRoles));
+    
+    await supabase.from('roles').insert([{ id: Date.now().toString(), name: roleName, perms: checkedPerms }]);
+    fetchData();
     showToast('نقش جدید تعریف شد');
   };
+
+  const deleteUser = async (id: string) => {
+    await supabase.from('users').delete().eq('id', id);
+    fetchData();
+  };
+
+  const deleteRole = async (id: string) => {
+    await supabase.from('roles').delete().eq('id', id);
+    fetchData();
+  };
+
   return (
     <div className="flex flex-col gap-8 animate-in fade-in zoom-in-95 duration-500 p-8 h-full overflow-y-auto custom-scrollbar no-print">
       <div className="flex items-center gap-4 bg-slate-100 p-1.5 rounded-2xl w-fit">
@@ -466,7 +511,7 @@ const UsersManager = () => {
               <form onSubmit={handleSaveUser} className="space-y-6">
                 <input name="username" type="text" defaultValue={editingUser?.username} placeholder="نام کاربری" className="w-full p-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl outline-none font-bold" required />
                 <input name="password" type="password" defaultValue={editingUser?.password} placeholder="رمز عبور" className="w-full p-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl outline-none font-bold" required />
-                <select name="roleId" defaultValue={editingUser?.roleId} className="w-full p-4 bg-slate-50 rounded-2xl outline-none font-bold">
+                <select name="roleId" defaultValue={editingUser?.role_id || editingUser?.roleId} className="w-full p-4 bg-slate-50 rounded-2xl outline-none font-bold">
                     {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
                 <button className="w-full bg-blue-600 text-white py-5 rounded-[24px] font-black text-lg shadow-xl shadow-blue-100">{editingUser ? 'بروزرسانی' : 'ثبت کاربر'}</button>
@@ -480,11 +525,11 @@ const UsersManager = () => {
                  <div key={u.id} className="py-5 flex items-center justify-between">
                    <div className="flex items-center gap-4">
                      <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center font-black text-slate-400">{u.username[0]}</div>
-                     <div><p className="font-bold text-slate-700">{u.username}</p><p className="text-xs text-slate-400">{roles.find((r:any)=>r.id===u.roleId)?.name}</p></div>
+                     <div><p className="font-bold text-slate-700">{u.username}</p><p className="text-xs text-slate-400">{roles.find((r:any)=>r.id===(u.role_id || u.roleId))?.name}</p></div>
                    </div>
                    <div className="flex gap-2">
                      <button onClick={() => setEditingUser(u)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl"><Pencil size={18}/></button>
-                     {u.username !== 'admin' && <button onClick={() => { const up = users.filter((us:any)=>us.id!==u.id); setUsers(up); localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(up)); }} className="p-2 text-red-400 hover:bg-red-50 rounded-xl"><Trash2 size={18}/></button>}
+                     {u.username !== 'admin' && <button onClick={() => deleteUser(u.id)} className="p-2 text-red-400 hover:bg-red-50 rounded-xl"><Trash2 size={18}/></button>}
                    </div>
                  </div>
                ))}
@@ -518,8 +563,8 @@ const UsersManager = () => {
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {roles.map((r:any) => (
                   <div key={r.id} className="p-6 bg-slate-50 rounded-[32px] border border-slate-100">
-                    <div className="flex justify-between items-center mb-4"><h4 className="font-black text-lg text-blue-600">{r.name}</h4>{r.id !== 'admin_role' && <Trash2 size={16} className="text-slate-300 cursor-pointer hover:text-red-500" onClick={() => { const nr = roles.filter((ro:any)=>ro.id!==r.id); setRoles(nr); localStorage.setItem(STORAGE_KEYS.ROLES, JSON.stringify(nr)); }} />}</div>
-                    <div className="flex flex-wrap gap-2">{r.perms.map((p:string) => <span key={p} className="px-3 py-1 bg-white rounded-lg text-[9px] font-black text-slate-500 border border-slate-100">{permissionsList.find(pl => pl.id === p)?.label}</span>)}</div>
+                    <div className="flex justify-between items-center mb-4"><h4 className="font-black text-lg text-blue-600">{r.name}</h4>{r.id !== 'admin_role' && <Trash2 size={16} className="text-slate-300 cursor-pointer hover:text-red-500" onClick={() => deleteRole(r.id)} />}</div>
+                    <div className="flex flex-wrap gap-2">{r.perms?.map((p:string) => <span key={p} className="px-3 py-1 bg-white rounded-lg text-[9px] font-black text-slate-500 border border-slate-100">{permissionsList.find(pl => pl.id === p)?.label}</span>)}</div>
                   </div>
                 ))}
              </div>
@@ -531,42 +576,70 @@ const UsersManager = () => {
 };
 
 const BackupManager = () => {
-  const handleExport = () => {
-    const data = { template: localStorage.getItem(STORAGE_KEYS.TEMPLATE), clients: localStorage.getItem(STORAGE_KEYS.CLIENTS), archive: localStorage.getItem(STORAGE_KEYS.ARCHIVE), users: localStorage.getItem(STORAGE_KEYS.USERS), roles: localStorage.getItem(STORAGE_KEYS.ROLES), version: '1.2.0', exportDate: new Date().toISOString() };
+  const handleExport = async () => {
+    const { data: t } = await supabase.from('settings').select('*');
+    const { data: c } = await supabase.from('clients').select('*');
+    const { data: a } = await supabase.from('contracts').select('*');
+    const { data: u } = await supabase.from('users').select('*');
+    const { data: r } = await supabase.from('roles').select('*');
+    
+    const data = { 
+      settings: t, 
+      clients: c, 
+      contracts: a, 
+      users: u, 
+      roles: r, 
+      version: '2.0.0', 
+      exportDate: new Date().toISOString() 
+    };
+    
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `asra_gps_backup_${new Date().toLocaleDateString('fa-IR').replace(/\//g, '-')}.json`;
-    a.click();
-    showToast('بک‌آپ کامل استخراج شد');
+    const aLink = document.createElement('a');
+    aLink.href = url;
+    aLink.download = `asra_gps_cloud_backup_${new Date().toLocaleDateString('fa-IR').replace(/\//g, '-')}.json`;
+    aLink.click();
+    showToast('بک‌آپ ابری استخراج شد');
   };
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        if (data.template) localStorage.setItem(STORAGE_KEYS.TEMPLATE, data.template);
-        if (data.clients) localStorage.setItem(STORAGE_KEYS.CLIENTS, data.clients);
-        if (data.archive) localStorage.setItem(STORAGE_KEYS.ARCHIVE, data.archive);
-        if (data.users) localStorage.setItem(STORAGE_KEYS.USERS, data.users);
-        if (data.roles) localStorage.setItem(STORAGE_KEYS.ROLES, data.roles);
+        showToast('در حال پاکسازی و جایگزینی داده‌ها...');
+        
+        // Clear all tables
+        await supabase.from('contracts').delete().neq('id', '0');
+        await supabase.from('clients').delete().neq('id', '0');
+        await supabase.from('users').delete().neq('username', 'admin');
+        await supabase.from('roles').delete().neq('id', 'admin_role');
+        await supabase.from('settings').delete().neq('key', '0');
+
+        // Restore
+        if (data.roles) await supabase.from('roles').upsert(data.roles);
+        if (data.users) await supabase.from('users').upsert(data.users);
+        if (data.clients) await supabase.from('clients').upsert(data.clients);
+        if (data.contracts) await supabase.from('contracts').upsert(data.contracts);
+        if (data.settings) await supabase.from('settings').upsert(data.settings);
+
         showToast('سیستم با موفقیت بازیابی شد. بارگذاری مجدد...');
         setTimeout(() => window.location.reload(), 2000);
       } catch (err) { showToast('خطا در خواندن فایل پشتیبان'); }
     };
     reader.readAsText(file);
   };
+
   return (
     <div className="p-12 animate-in fade-in zoom-in-95 h-full flex flex-col items-center justify-center text-center max-w-2xl mx-auto no-print">
       <div className="w-48 h-48 bg-white text-blue-600 rounded-[56px] flex items-center justify-center mb-10 shadow-2xl shadow-blue-100 ring-8 ring-white p-10"><AsraLogo size={140} /></div>
-      <h2 className="text-3xl font-black text-slate-800 mb-4 tracking-tight">امنیت داده‌ها</h2>
-      <p className="text-slate-500 font-medium text-lg leading-relaxed mb-12">فایل پشتیبان شامل تمام کاربران، نقش‌ها، مشتریان و قالب‌های طراحی شده می‌باشد.</p>
+      <h2 className="text-3xl font-black text-slate-800 mb-4 tracking-tight">امنیت داده‌های ابری</h2>
+      <p className="text-slate-500 font-medium text-lg leading-relaxed mb-12">فایل پشتیبان شامل تمام داده‌های ذخیره شده در دیتابیس Supabase می‌باشد.</p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
-        <button onClick={handleExport} className="bg-slate-900 text-white p-8 rounded-[40px] flex flex-col items-center gap-4 hover:scale-105 transition-all shadow-2xl"><Download size={32} /><span className="font-black text-xl">خروجی کامل سیستم</span></button>
-        <label className="bg-blue-600 text-white p-8 rounded-[40px] flex flex-col items-center gap-4 hover:scale-105 transition-all shadow-2xl shadow-blue-200 cursor-pointer"><FileJson size={32} /><span className="font-black text-xl">بازیابی اطلاعات</span><input type="file" className="hidden" accept=".cflow,.json" onChange={handleImport} /></label>
+        <button onClick={handleExport} className="bg-slate-900 text-white p-8 rounded-[40px] flex flex-col items-center gap-4 hover:scale-105 transition-all shadow-2xl"><Download size={32} /><span className="font-black text-xl">خروجی کامل از ابر</span></button>
+        <label className="bg-blue-600 text-white p-8 rounded-[40px] flex flex-col items-center gap-4 hover:scale-105 transition-all shadow-2xl shadow-blue-200 cursor-pointer"><FileJson size={32} /><span className="font-black text-xl">بازیابی و جایگزینی</span><input type="file" className="hidden" accept=".json" onChange={handleImport} /></label>
       </div>
     </div>
   );
@@ -581,11 +654,33 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
   const selectedField = activePage.fields.find(f => f.id === selectedFieldId);
 
   const updatePage = (updates: Partial<ContractPage>) => setTemplate({ ...template, pages: template.pages.map(p => p.pageNumber === activePageNum ? { ...p, ...updates } : p) });
-  const handleSaveTemplate = () => { localStorage.setItem(STORAGE_KEYS.TEMPLATE, JSON.stringify(template)); showToast('قالب طراحی در حافظه مرورگر تثبیت شد'); };
+  
+  const handleSaveTemplate = async () => { 
+    const { error } = await supabase.from('settings').upsert([{ key: 'contract_template', value: template }]);
+    if (!error) showToast('قالب طراحی در پایگاه داده تثبیت شد'); 
+  };
+
   const updateField = (id: string, updates: Partial<ContractField>) => setTemplate({ ...template, pages: template.pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: p.fields.map(f => f.id === id ? { ...f, ...updates } : f) } : p) });
   const handleAddField = () => { if (!newField.label) { showToast('نام المان نمی‌تواند خالی باشد'); return; } const id = Date.now().toString(); const field: ContractField = { id, label: newField.label, key: `f_${id}`, isActive: true, x: 40, y: 40, width: newField.width, height: 30, fontSize: newField.fontSize, rotation: 0, alignment: newField.alignment }; setTemplate({ ...template, pages: template.pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: [...p.fields, field] } : p) }); setNewField({ label: '', fontSize: 14, width: 150, alignment: 'R' }); showToast('المان جدید به بوم اضافه شد'); };
   const removeField = (id: string) => { setTemplate({ ...template, pages: template.pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: p.fields.filter(f => f.id !== id) } : p) }); showToast('المان حذف شد'); };
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onload = (event) => { updatePage({ bgImage: event.target?.result as string }); showToast('تصویر سربرگ آپلود شد'); }; reader.readAsDataURL(file); } };
+  
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => { 
+    const file = e.target.files?.[0]; 
+    if (file) { 
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `headers/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage.from('letterheads').upload(filePath, file);
+      
+      if (!uploadError) {
+        const { data: { publicUrl } } = supabase.storage.from('letterheads').getPublicUrl(filePath);
+        updatePage({ bgImage: publicUrl });
+        showToast('تصویر سربرگ آپلود و در ابر ذخیره شد');
+      }
+    } 
+  };
+
   const handleDrag = (e: React.MouseEvent, id: string) => { if (!canvasRef.current) return; const canvasRect = canvasRef.current.getBoundingClientRect(); setSelectedFieldId(id); const onMouseMove = (m: MouseEvent) => { const x = ((m.clientX - canvasRect.left) / canvasRect.width) * 100; const y = ((m.clientY - canvasRect.top) / canvasRect.height) * 100; updateField(id, { x: Math.max(0, Math.min(98, x)), y: Math.max(0, Math.min(98, y)) }); }; const onMouseUp = () => { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); };
 
   return (
@@ -695,8 +790,26 @@ const SettingsPanel = ({ template, setTemplate, userPermissions }: { template: C
 };
 
 const ArchivePanel = ({ onEdit, perms }: { onEdit: (contract: any) => void, perms: string[] }) => {
-  const [contracts, setContracts] = useState<any[]>(() => JSON.parse(localStorage.getItem(STORAGE_KEYS.ARCHIVE) || '[]'));
-  const handleDelete = (id: string) => { if (!perms.includes('archive_delete')) return; const nc = contracts.filter(c => c.id !== id); setContracts(nc); localStorage.setItem(STORAGE_KEYS.ARCHIVE, JSON.stringify(nc)); showToast('قرارداد از بایگانی حذف شد'); };
+  const [contracts, setContracts] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchContracts();
+  }, []);
+
+  const fetchContracts = async () => {
+    const { data } = await supabase.from('contracts').select('*').order('timestamp', { ascending: false });
+    if (data) setContracts(data);
+  };
+
+  const handleDelete = async (id: string) => { 
+    if (!perms.includes('archive_delete')) return; 
+    const { error } = await supabase.from('contracts').delete().eq('id', id);
+    if (!error) {
+      fetchContracts();
+      showToast('قرارداد از بایگانی حذف شد'); 
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto py-12 animate-in fade-in zoom-in-95 duration-700 no-print">
       <div className="flex justify-between items-center mb-10 px-4"><div><h2 className="text-3xl font-black text-slate-800 tracking-tight">بایگانی اسناد صادر شده</h2></div><div className="bg-white p-2 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3 px-6"><Search size={18} className="text-slate-300" /><input type="text" placeholder="جستجوی سریع..." className="outline-none bg-transparent text-sm font-bold w-48" /></div></div>
@@ -704,9 +817,9 @@ const ArchivePanel = ({ onEdit, perms }: { onEdit: (contract: any) => void, perm
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 px-4">
           {contracts.map(contract => (
             <div key={contract.id} className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 hover:shadow-xl transition-all group relative">
-               {contract.isExtended && <div className="absolute top-4 left-4 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-lg text-[10px] font-black z-10">تمدید شده</div>}
-               <div className="flex justify-between items-start mb-6"><div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl font-black">{contract.clientName[0]}</div><div className="flex gap-2">{perms.includes('archive_edit') && <button onClick={() => onEdit(contract)} className="text-slate-300 hover:text-amber-500 transition-all p-2 bg-slate-50 rounded-xl"><Pencil size={20}/></button>}{perms.includes('archive_print') && <button onClick={() => { onEdit(contract); setTimeout(() => window.print(), 100); }} className="text-slate-300 hover:text-blue-600 transition-all p-2 bg-slate-50 rounded-xl"><Printer size={20}/></button>}{perms.includes('archive_delete') && <button onClick={() => handleDelete(contract.id)} className="text-slate-300 hover:text-red-500 transition-all p-2 bg-slate-50 rounded-xl"><Trash2 size={20}/></button>}</div></div>
-               <h4 className="font-black text-xl text-slate-800 mb-2">{contract.clientName}</h4><p className="text-xs text-slate-400 font-medium mb-6">ثبت شده در: {new Date(contract.timestamp).toLocaleDateString('fa-IR')}</p>
+               {contract.is_extended && <div className="absolute top-4 left-4 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-lg text-[10px] font-black z-10">تمدید شده</div>}
+               <div className="flex justify-between items-start mb-6"><div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl font-black">{(contract.client_name || 'N')[0]}</div><div className="flex gap-2">{perms.includes('archive_edit') && <button onClick={() => onEdit(contract)} className="text-slate-300 hover:text-amber-500 transition-all p-2 bg-slate-50 rounded-xl"><Pencil size={20}/></button>}{perms.includes('archive_print') && <button onClick={() => { onEdit(contract); setTimeout(() => window.print(), 100); }} className="text-slate-300 hover:text-blue-600 transition-all p-2 bg-slate-50 rounded-xl"><Printer size={20}/></button>}{perms.includes('archive_delete') && <button onClick={() => handleDelete(contract.id)} className="text-slate-300 hover:text-red-500 transition-all p-2 bg-slate-50 rounded-xl"><Trash2 size={20}/></button>}</div></div>
+               <h4 className="font-black text-xl text-slate-800 mb-2">{contract.client_name}</h4><p className="text-xs text-slate-400 font-medium mb-6">ثبت شده در: {new Date(contract.timestamp).toLocaleDateString('fa-IR')}</p>
             </div>
           ))}
         </div>
@@ -716,20 +829,62 @@ const ArchivePanel = ({ onEdit, perms }: { onEdit: (contract: any) => void, perm
 };
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<any>(() => { const session = localStorage.getItem(STORAGE_KEYS.SESSION); return session ? JSON.parse(session) : null; });
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [roles, setRoles] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('workspace');
   const [editingContract, setEditingContract] = useState<any>(null);
   const [formData, setFormData] = useState<Record<string, string>>({});
-  const [template, setTemplate] = useState<ContractTemplate>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.TEMPLATE);
-    if (saved) return JSON.parse(saved);
-    return { id: 'default', pages: [ { pageNumber: 1, paperSize: PaperSize.A4, fields: INITIAL_FIELDS, showBackgroundInPrint: true }, { pageNumber: 2, paperSize: PaperSize.A4, fields: [], showBackgroundInPrint: true }, { pageNumber: 3, paperSize: PaperSize.A4, fields: [], showBackgroundInPrint: true } ]};
-  });
-  const userPermissions = useMemo(() => { if (!currentUser) return []; const roles = JSON.parse(localStorage.getItem(STORAGE_KEYS.ROLES) || JSON.stringify(INITIAL_ROLES)); const role = roles.find((r: any) => r.id === currentUser.roleId); return role ? role.perms : []; }, [currentUser]);
-  useEffect(() => { if (currentUser && !userPermissions.includes(activeTab)) { if (userPermissions.includes('workspace')) setActiveTab('workspace'); else if (userPermissions.includes('archive')) setActiveTab('archive'); else if (userPermissions.includes('settings')) setActiveTab('settings'); } }, [userPermissions, activeTab]);
-  const handleLogin = (user: any) => { setCurrentUser(user); localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(user)); showToast(`خوش آمدید، ${user.username}`); };
-  const handleLogout = () => { setCurrentUser(null); localStorage.removeItem(STORAGE_KEYS.SESSION); };
+  const [template, setTemplate] = useState<ContractTemplate>({ id: 'default', pages: [ { pageNumber: 1, paperSize: PaperSize.A4, fields: INITIAL_FIELDS, showBackgroundInPrint: true }, { pageNumber: 2, paperSize: PaperSize.A4, fields: [], showBackgroundInPrint: true }, { pageNumber: 3, paperSize: PaperSize.A4, fields: [], showBackgroundInPrint: true } ]});
+  const [initializing, setInitializing] = useState(true);
+
+  useEffect(() => {
+    initializeApp();
+  }, []);
+
+  const initializeApp = async () => {
+    // 1. Load Session
+    const savedSession = localStorage.getItem('asra_gps_session_v2');
+    if (savedSession) setCurrentUser(JSON.parse(savedSession));
+
+    // 2. Load Roles
+    const { data: rData } = await supabase.from('roles').select('*');
+    if (rData) setRoles(rData);
+
+    // 3. Load Template from Settings
+    const { data: sData } = await supabase.from('settings').select('*').eq('key', 'contract_template').single();
+    if (sData?.value) setTemplate(sData.value);
+
+    setInitializing(false);
+  };
+
+  const userPermissions = useMemo(() => { 
+    if (!currentUser) return []; 
+    const role = roles.find((r: any) => r.id === (currentUser.role_id || currentUser.roleId)); 
+    return role ? role.perms : []; 
+  }, [currentUser, roles]);
+
+  useEffect(() => { 
+    if (!initializing && currentUser && !userPermissions.includes(activeTab)) { 
+      if (userPermissions.includes('workspace')) setActiveTab('workspace'); 
+      else if (userPermissions.includes('archive')) setActiveTab('archive'); 
+      else if (userPermissions.includes('settings')) setActiveTab('settings'); 
+    } 
+  }, [userPermissions, activeTab, initializing]);
+
+  const handleLogin = (user: any) => { 
+    setCurrentUser(user); 
+    localStorage.setItem('asra_gps_session_v2', JSON.stringify(user)); 
+    showToast(`خوش آمدید، ${user.username}`); 
+  };
+
+  const handleLogout = () => { 
+    setCurrentUser(null); 
+    localStorage.removeItem('asra_gps_session_v2'); 
+  };
+
+  if (initializing) return <div className="fixed inset-0 bg-slate-50 flex items-center justify-center font-black text-slate-400">در حال بارگذاری سیستم...</div>;
   if (!currentUser) return <LoginForm onLogin={handleLogin} />;
+
   return (
     <div className="flex min-h-screen bg-[#FDFDFD] font-sans overflow-hidden select-none" dir="rtl">
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} userPermissions={userPermissions} onLogout={handleLogout} />
@@ -741,7 +896,6 @@ export default function App() {
         </div>
       </main>
       
-      {/* PROFESSIONAL PRINT ENGINE (Portal based) */}
       <PrintLayout template={template} formData={formData} />
       
       <Toast />
