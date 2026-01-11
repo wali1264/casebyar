@@ -42,13 +42,15 @@ const Toast = () => {
 
 // --- Print Renderer Component ---
 const PrintLayout = ({ template, formData }: { template: ContractTemplate, formData: Record<string, string> }) => {
-  const masterPaperSize = template.pages[0]?.paperSize || PaperSize.A4;
+  const masterPaperSize = template.pages?.[0]?.paperSize || PaperSize.A4;
   const isMasterA4 = masterPaperSize === PaperSize.A4;
   
+  if (!template.pages || template.pages.length === 0) return null;
+
   return ReactDOM.createPortal(
     <div className="print-root-layer">
       {template.pages.map((page, index) => {
-        const activeFields = page.fields.filter(f => f.isActive);
+        const activeFields = page.fields?.filter(f => f.isActive) || [];
         if (activeFields.length === 0 && index > 0) return null;
 
         return (
@@ -193,13 +195,13 @@ const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormD
   };
 
   useEffect(() => {
-    if (editData) {
+    if (editData && clients.length > 0) {
       const client = clients.find(c => c.id === editData.client_id || c.id === editData.clientId);
       if (client) {
         setSelectedClient(client);
         setFormData(editData.form_data || editData.formData || {});
-        const pagesWithData = template.pages
-          .filter(p => p.fields.some(f => (editData.form_data || editData.formData)?.[f.key]))
+        const pagesWithData = (template.pages || [])
+          .filter(p => p.fields?.some(f => (editData.form_data || editData.formData)?.[f.key]))
           .map(p => p.pageNumber);
         setVisiblePages(pagesWithData.length > 0 ? pagesWithData : [1]);
       }
@@ -262,7 +264,7 @@ const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormD
   const handleEnter = (e: React.KeyboardEvent, currentKey: string) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const allKeys = template.pages.flatMap(p => p.fields.filter(f => f.isActive)).map(f => f.key);
+      const allKeys = (template.pages || []).flatMap(p => (p.fields || []).filter(f => f.isActive)).map(f => f.key);
       const currentIndex = allKeys.indexOf(currentKey);
       if (currentIndex < allKeys.length - 1) inputRefs.current[allKeys[currentIndex + 1]]?.focus();
     }
@@ -390,9 +392,9 @@ const Workspace = ({ template, editData, onEditCancel, perms, formData, setFormD
       </div>
 
       <div className="flex-1 overflow-y-auto pb-32 space-y-6 custom-scrollbar px-1 no-print">
-        {template.pages.map((page) => {
+        {(template.pages || []).map((page) => {
           const isPageOpen = visiblePages.includes(page.pageNumber);
-          const activeFields = page.fields.filter(f => f.isActive);
+          const activeFields = (page.fields || []).filter(f => f.isActive);
           if (activeFields.length === 0) return null;
           return (
             <div key={page.pageNumber} className={`bg-white rounded-[32px] border border-slate-100 transition-all w-full ${isPageOpen ? 'shadow-lg' : 'opacity-60 shadow-sm'}`}>
@@ -650,19 +652,23 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
   const [newField, setNewField] = useState({ label: '', fontSize: 14, width: 150, alignment: 'R' as TextAlignment });
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const activePage = template.pages.find(p => p.pageNumber === activePageNum) || template.pages[0];
-  const selectedField = activePage.fields.find(f => f.id === selectedFieldId);
+  
+  // SAFETY: Ensure template and pages exist
+  const pages = template.pages || [];
+  const activePage = pages.find(p => p.pageNumber === activePageNum) || pages[0] || { pageNumber: activePageNum, fields: [], paperSize: PaperSize.A4, showBackgroundInPrint: true };
+  const fields = activePage.fields || [];
+  const selectedField = fields.find(f => f.id === selectedFieldId);
 
-  const updatePage = (updates: Partial<ContractPage>) => setTemplate({ ...template, pages: template.pages.map(p => p.pageNumber === activePageNum ? { ...p, ...updates } : p) });
+  const updatePage = (updates: Partial<ContractPage>) => setTemplate({ ...template, pages: pages.map(p => p.pageNumber === activePageNum ? { ...p, ...updates } : p) });
   
   const handleSaveTemplate = async () => { 
     const { error } = await supabase.from('settings').upsert([{ key: 'contract_template', value: template }]);
     if (!error) showToast('قالب طراحی در پایگاه داده تثبیت شد'); 
   };
 
-  const updateField = (id: string, updates: Partial<ContractField>) => setTemplate({ ...template, pages: template.pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: p.fields.map(f => f.id === id ? { ...f, ...updates } : f) } : p) });
-  const handleAddField = () => { if (!newField.label) { showToast('نام المان نمی‌تواند خالی باشد'); return; } const id = Date.now().toString(); const field: ContractField = { id, label: newField.label, key: `f_${id}`, isActive: true, x: 40, y: 40, width: newField.width, height: 30, fontSize: newField.fontSize, rotation: 0, alignment: newField.alignment }; setTemplate({ ...template, pages: template.pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: [...p.fields, field] } : p) }); setNewField({ label: '', fontSize: 14, width: 150, alignment: 'R' }); showToast('المان جدید به بوم اضافه شد'); };
-  const removeField = (id: string) => { setTemplate({ ...template, pages: template.pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: p.fields.filter(f => f.id !== id) } : p) }); showToast('المان حذف شد'); };
+  const updateField = (id: string, updates: Partial<ContractField>) => setTemplate({ ...template, pages: pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: fields.map(f => f.id === id ? { ...f, ...updates } : f) } : p) });
+  const handleAddField = () => { if (!newField.label) { showToast('نام المان نمی‌تواند خالی باشد'); return; } const id = Date.now().toString(); const field: ContractField = { id, label: newField.label, key: `f_${id}`, isActive: true, x: 40, y: 40, width: newField.width, height: 30, fontSize: newField.fontSize, rotation: 0, alignment: newField.alignment }; setTemplate({ ...template, pages: pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: [...fields, field] } : p) }); setNewField({ label: '', fontSize: 14, width: 150, alignment: 'R' }); showToast('المان جدید به بوم اضافه شد'); };
+  const removeField = (id: string) => { setTemplate({ ...template, pages: pages.map(p => p.pageNumber === activePageNum ? { ...p, fields: fields.filter(f => f.id !== id) } : p) }); showToast('المان حذف شد'); };
   
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => { 
     const file = e.target.files?.[0]; 
@@ -712,7 +718,7 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
             <>
               <div><h3 className="text-sm font-black text-slate-800 mb-4 flex items-center gap-2"><Layers size={18} className="text-blue-600" /> لیست المان‌ها</h3>
                 <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1 custom-scrollbar">
-                  {activePage.fields.map(f => (
+                  {fields.map(f => (
                     <div key={f.id} onClick={() => setSelectedFieldId(f.id)} className={`flex items-center justify-between p-3.5 rounded-xl cursor-pointer transition-all border-2 ${selectedFieldId === f.id ? 'bg-white border-blue-500 shadow-md text-blue-700 font-bold scale-[1.01]' : 'bg-white/50 border-transparent hover:bg-white text-slate-500'}`}>
                       <span className="text-xs font-black">{f.label}</span>
                       <div onClick={(e) => { e.stopPropagation(); updateField(f.id, { isActive: !f.isActive }); }} className={`w-5 h-5 rounded flex items-center justify-center border-2 transition-all ${f.isActive ? 'bg-blue-600 border-blue-600' : 'border-slate-200 bg-white'}`}>{f.isActive && <Check size={10} className="text-white" />}</div>
@@ -743,7 +749,7 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
                 <h3 className="text-xs font-black text-blue-900 mb-4 flex items-center gap-2"><PlusCircle size={14} /> تعریف المان</h3>
                 <div className="space-y-4"><input type="text" value={newField.label} placeholder="عنوان فیلد..." onChange={e => setNewField({...newField, label: e.target.value})} className="w-full p-3.5 bg-white border-2 border-transparent focus:border-blue-500 rounded-2xl outline-none font-bold text-xs" /><button onClick={handleAddField} className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-xs shadow-lg shadow-blue-100">افزودن به برگه</button></div>
               </div>
-              <div className="space-y-3">{activePage.fields.map(f => <div key={f.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center gap-3"><span className="text-xs font-bold text-slate-700 flex-1">{f.label}</span><div className="flex gap-1"><button onClick={() => updateField(f.id, { isActive: !f.isActive })} className={`p-1.5 rounded transition-all ${f.isActive ? 'text-emerald-500 bg-emerald-50' : 'text-slate-300 bg-slate-50'}`}><Check size={14}/></button><button onClick={() => removeField(f.id)} className="p-1.5 hover:bg-red-50 rounded text-red-400"><Trash2 size={14}/></button></div></div>)}</div>
+              <div className="space-y-3">{fields.map(f => <div key={f.id} className="p-4 bg-white border border-slate-100 rounded-2xl flex items-center gap-3"><span className="text-xs font-bold text-slate-700 flex-1">{f.label}</span><div className="flex gap-1"><button onClick={() => updateField(f.id, { isActive: !f.isActive })} className={`p-1.5 rounded transition-all ${f.isActive ? 'text-emerald-500 bg-emerald-50' : 'text-slate-300 bg-slate-50'}`}><Check size={14}/></button><button onClick={() => removeField(f.id)} className="p-1.5 hover:bg-red-50 rounded text-red-400"><Trash2 size={14}/></button></div></div>)}</div>
             </div>
           )}
           <div className="mt-auto pt-4 border-t border-slate-100">
@@ -755,7 +761,7 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
         </div>
         <div className="flex-1 bg-slate-200/30 p-8 overflow-auto flex items-start justify-center custom-scrollbar no-print">
           <div ref={canvasRef} className="bg-white shadow-2xl relative border border-slate-200 transition-all origin-top no-print" style={{ width: activePage.paperSize === PaperSize.A4 ? '595px' : '420px', height: activePage.paperSize === PaperSize.A4 ? '842px' : '595px', backgroundImage: activePage.bgImage ? `url(${activePage.bgImage})` : 'none', backgroundSize: '100% 100%' }}>
-            {activePage.fields.filter(f => f.isActive).map(f => (
+            {fields.filter(f => f.isActive).map(f => (
               <div key={f.id} onMouseDown={e => handleDrag(e, f.id)} className={`absolute cursor-move select-none group/field ${selectedFieldId === f.id ? 'z-50' : 'z-10'}`} style={{ left: `${f.x}%`, top: `${f.y}%`, width: `${f.width}px`, transform: `rotate(${f.rotation}deg)`, fontSize: `${f.fontSize}px`, textAlign: f.alignment === 'L' ? 'left' : f.alignment === 'R' ? 'right' : 'center', display: 'flex', alignItems: 'center', justifyContent: f.alignment === 'L' ? 'flex-start' : f.alignment === 'R' ? 'flex-end' : 'center' }}>
                 <div className={`absolute -inset-2 border-2 rounded-lg transition-all ${selectedFieldId === f.id ? 'border-blue-500 bg-blue-500/5 shadow-md' : 'border-transparent'}`} />
                 <span className={`relative font-black tracking-tight w-full leading-tight break-words hyphens-auto ${selectedFieldId === f.id ? 'text-blue-700' : 'text-slate-800 opacity-60'}`} style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}>{f.label}</span>
@@ -834,7 +840,17 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('workspace');
   const [editingContract, setEditingContract] = useState<any>(null);
   const [formData, setFormData] = useState<Record<string, string>>({});
-  const [template, setTemplate] = useState<ContractTemplate>({ id: 'default', pages: [ { pageNumber: 1, paperSize: PaperSize.A4, fields: INITIAL_FIELDS, showBackgroundInPrint: true }, { pageNumber: 2, paperSize: PaperSize.A4, fields: [], showBackgroundInPrint: true }, { pageNumber: 3, paperSize: PaperSize.A4, fields: [], showBackgroundInPrint: true } ]});
+  
+  const DEFAULT_TEMPLATE: ContractTemplate = { 
+    id: 'default', 
+    pages: [ 
+      { pageNumber: 1, paperSize: PaperSize.A4, fields: INITIAL_FIELDS, showBackgroundInPrint: true }, 
+      { pageNumber: 2, paperSize: PaperSize.A4, fields: [], showBackgroundInPrint: true }, 
+      { pageNumber: 3, paperSize: PaperSize.A4, fields: [], showBackgroundInPrint: true } 
+    ]
+  };
+
+  const [template, setTemplate] = useState<ContractTemplate>(DEFAULT_TEMPLATE);
   const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
@@ -851,8 +867,21 @@ export default function App() {
     if (rData) setRoles(rData);
 
     // 3. Load Template from Settings
-    const { data: sData } = await supabase.from('settings').select('*').eq('key', 'contract_template').single();
-    if (sData?.value) setTemplate(sData.value);
+    const { data: sData } = await supabase.from('settings').select('*').eq('key', 'contract_template');
+    
+    if (sData && sData.length > 0) {
+      const dbTemplate = sData[0].value;
+      // Merge with default to ensure all pages exist
+      setTemplate({
+        ...DEFAULT_TEMPLATE,
+        ...dbTemplate,
+        pages: dbTemplate.pages && dbTemplate.pages.length > 0 ? dbTemplate.pages : DEFAULT_TEMPLATE.pages
+      });
+    } else {
+      // If db is empty, set default and push to db
+      setTemplate(DEFAULT_TEMPLATE);
+      await supabase.from('settings').upsert([{ key: 'contract_template', value: DEFAULT_TEMPLATE }]);
+    }
 
     setInitializing(false);
   };
