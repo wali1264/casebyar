@@ -6,21 +6,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Asra GPS - سیستم مدیریت هوشمند ردیاب</title>
     
-    <!-- PWA Optimized Meta Tags -->
-    <link rel="manifest" href="manifest.json">
+    <!-- PWA Root-Relative Meta Tags -->
+    <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0f172a">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Asra GPS">
     
-    <!-- Link icons directly to ensure no 404 from relative paths -->
-    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-    <link rel="apple-touch-icon" href="icon-192.png">
+    <!-- Explicit Root Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+    <link rel="apple-touch-icon" href="/icon-192.png">
     
-    <!-- Microsoft / Windows Meta -->
+    <!-- Microsoft Meta -->
     <meta name="msapplication-TileColor" content="#0f172a">
-    <meta name="msapplication-TileImage" content="icon-192.png">
+    <meta name="msapplication-TileImage" content="/icon-192.png">
     <meta name="application-name" content="Asra GPS">
 
     <script src="https://cdn.tailwindcss.com"></script>
@@ -64,13 +64,12 @@
 <body>
     <div id="root"></div>
     <script>
-        // Fixing SW registration path to be relative to the current directory
-        // This ensures Vercel and other hosts find the sw.js correctly.
+        // Use absolute root path for service worker
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js', { scope: './' })
+                navigator.serviceWorker.register('/sw.js', { scope: '/' })
                 .then(reg => {
-                    console.log('PWA: ServiceWorker Registered successfully at scope:', reg.scope);
+                    console.log('PWA: ServiceWorker Registered at root scope');
                 })
                 .catch(err => {
                     console.error('PWA: ServiceWorker Registration failed:', err);
@@ -78,11 +77,9 @@
             });
         }
 
-        // Global handler for installation prompt
         window.addEventListener('beforeinstallprompt', (e) => {
             e.preventDefault();
             window.deferredPrompt = e;
-            console.log('PWA: System is ready for installation. Call window.deferredPrompt.prompt() to show.');
         });
     </script>
     <script type="module" src="index.tsx"></script>
