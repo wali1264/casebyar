@@ -2,8 +2,8 @@
   "name": "سامانه اسراء GPS",
   "short_name": "AsraGPS",
   "description": "مدیریت هوشمند قراردادهای ردیاب خودرو",
-  "id": "asra-gps-v2",
-  "start_url": ".",
+  "id": "asra-gps-v3",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
@@ -32,7 +32,8 @@
       "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "form_factor": "wide"
+      "form_factor": "wide",
+      "label": "نمای مدیریت اسراء GPS"
     }
   ]
 }
