@@ -38,13 +38,14 @@ const cacheImage = async (url: string): Promise<string> => {
     if (cached) return URL.createObjectURL(cached);
 
     // If not cached, fetch and store
-    const response = await fetch(url);
+    // Use 'no-cors' only if necessary, but here we expect Supabase to have proper CORS
+    const response = await fetch(url, { mode: 'cors' });
     const blob = await response.blob();
     const writeTx = db.transaction(STORE_NAME, 'readwrite');
     writeTx.objectStore(STORE_NAME).put(blob, url);
     return URL.createObjectURL(blob);
   } catch (e) {
-    console.error('Caching error:', e);
+    console.warn('Caching failed for:', url, e);
     return url;
   }
 };
@@ -964,24 +965,31 @@ export default function App() {
     // 3. Load Template from Settings
     const { data: sData } = await supabase.from('settings').select('*').eq('key', 'contract_template');
     
+    let activeTemplate = DEFAULT_TEMPLATE;
     if (sData && sData.length > 0) {
       const dbTemplate = sData[0].value;
-      // Merge with default to ensure all pages exist
-      const mergedTemplate = {
+      activeTemplate = {
         ...DEFAULT_TEMPLATE,
         ...dbTemplate,
         pages: dbTemplate.pages && dbTemplate.pages.length > 0 ? dbTemplate.pages : DEFAULT_TEMPLATE.pages
       };
-      setTemplate(mergedTemplate);
-      
-      // Warm up cache for all pages
-      if (mergedTemplate.pages) {
-        mergedTemplate.pages.forEach(p => p.bgImage && cacheImage(p.bgImage));
-      }
     } else {
-      // If db is empty, set default and push to db
-      setTemplate(DEFAULT_TEMPLATE);
       await supabase.from('settings').upsert([{ key: 'contract_template', value: DEFAULT_TEMPLATE }]);
+    }
+    
+    setTemplate(activeTemplate);
+
+    // CRITICAL: Hydrate and Cache all images in background to ensure persistence
+    if (activeTemplate.pages) {
+      for (const p of activeTemplate.pages) {
+        if (p.bgImage) {
+          try {
+            await cacheImage(p.bgImage);
+          } catch (err) {
+            console.error('Initial sync failed for page', p.pageNumber, err);
+          }
+        }
+      }
     }
 
     setInitializing(false);
