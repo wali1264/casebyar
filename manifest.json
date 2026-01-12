@@ -1,15 +1,12 @@
 {
   "name": "سامانه اسراء GPS",
   "short_name": "AsraGPS",
-  "description": "مدیریت هوشمند قراردادهای ردیاب خودرو و خدمات پس از فروش",
+  "description": "مدیریت هوشمند قراردادهای ردیاب خودرو",
   "id": "asra-gps-v2",
-  "start_url": "/?source=pwa",
+  "start_url": ".",
   "display": "standalone",
-  "display_override": ["standalone", "window-controls-overlay"],
-  "orientation": "portrait",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
-  "categories": ["business", "productivity", "utilities"],
   "icons": [
     {
       "src": "icon-192.png",
@@ -30,32 +27,12 @@
       "purpose": "any"
     }
   ],
-  "shortcuts": [
-    {
-      "name": "میز کار",
-      "url": "/?tab=workspace",
-      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
-    },
-    {
-      "name": "بایگانی",
-      "url": "/?tab=archive",
-      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
-    }
-  ],
   "screenshots": [
     {
       "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "form_factor": "wide",
-      "label": "Asra GPS Management Console"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "form_factor": "narrow",
-      "label": "Asra GPS Mobile View"
+      "form_factor": "wide"
     }
   ]
 }

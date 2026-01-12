@@ -7,17 +7,17 @@
     <title>Asra GPS - سیستم مدیریت هوشمند ردیاب</title>
     
     <!-- PWA Optimized Meta Tags -->
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#0f172a">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Asra GPS">
-    <link rel="apple-touch-icon" href="/icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
     
     <!-- Microsoft / Windows Meta -->
     <meta name="msapplication-TileColor" content="#0f172a">
-    <meta name="msapplication-TileImage" content="/icon-192.png">
+    <meta name="msapplication-TileImage" content="icon-192.png">
     <meta name="application-name" content="Asra GPS">
 
     <script src="https://cdn.tailwindcss.com"></script>
@@ -61,37 +61,27 @@
 <body>
     <div id="root"></div>
     <script>
-        let deferredPrompt;
-
-        // Service Worker Registration
+        // Fixing SW registration path for Vercel environments
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js', { scope: '/' })
+                // Using relative path without leading slash to avoid base-path issues
+                navigator.serviceWorker.register('sw.js')
                 .then(reg => {
-                    console.log('PWA: ServiceWorker Registered on scope:', reg.scope);
-                    // Automatic update check
-                    reg.onupdatefound = () => {
-                        const installingWorker = reg.installing;
-                        installingWorker.onstatechange = () => {
-                            if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                                console.log('PWA: New content available; please refresh.');
-                            }
-                        };
-                    };
+                    console.log('PWA: ServiceWorker Registered successfully');
                 })
-                .catch(err => console.error('PWA: Registration failed:', err));
+                .catch(err => {
+                    console.error('PWA: ServiceWorker Registration failed:', err);
+                });
             });
         }
 
-        // Listen for the beforeinstallprompt event
         window.addEventListener('beforeinstallprompt', (e) => {
-            // Prevent Chrome 67 and earlier from automatically showing the prompt
             e.preventDefault();
-            // Stash the event so it can be triggered later.
-            deferredPrompt = e;
-            console.log('PWA: Install prompt is ready to be shown.');
+            window.deferredPrompt = e;
+            console.log('PWA: Install criteria met. Ready for installation.');
         });
     </script>
+    <script type="module" src="index.tsx"></script>
 <script type="module" src="/index.tsx"></script>
 </body>
 </html>
