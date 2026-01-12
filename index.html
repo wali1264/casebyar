@@ -3,10 +3,17 @@
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Asra GPS - سیستم مدیریت هوشمند ردیاب</title>
-    <link rel="manifest" href="manifest.json">
+    
+    <!-- PWA Primary Tags -->
+    <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0f172a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Asra GPS">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;400;700;900&display=swap" rel="stylesheet">
     <style>
@@ -15,74 +22,22 @@
             background-color: #f8fafc;
             margin: 0;
             padding: 0;
+            overscroll-behavior-y: contain; /* Prevents pull-to-refresh on PWA */
         }
         
         /* UI Tweak */
         input::placeholder { color: #cbd5e1; font-weight: normal; }
 
-        /* PROFESSIONAL PRINT ENGINE - GLOBAL LAYER */
         @media print {
-            /* 1. Hide the entire UI root without destroying the render context */
-            #root {
-                display: none !important;
-                visibility: hidden !important;
-            }
-
-            /* 2. Force background images and colors to print */
-            * {
-                -webkit-print-color-adjust: exact !important;
-                print-color-adjust: exact !important;
-                color-adjust: exact !important;
-            }
-
-            /* 3. Global Page Settings */
-            @page {
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-
-            /* 4. The Print-Only Layer */
-            .print-root-layer {
-                display: block !important;
-                visibility: visible !important;
-                position: absolute !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 100% !important;
-                background: white !important;
-            }
-
-            .print-page-unit {
-                display: block !important;
-                position: relative !important;
-                margin: 0 auto !important;
-                overflow: hidden !important;
-                page-break-after: always !important;
-                box-sizing: border-box !important;
-                background-color: white !important;
-            }
-
-            .print-field {
-                position: absolute !important;
-                display: flex !important;
-                align-items: center !important;
-                line-height: 1.2 !important;
-                pointer-events: none !important;
-                white-space: nowrap !important;
-            }
-
-            .print-text-content {
-                width: 100% !important;
-                font-family: 'Vazirmatn', sans-serif !important;
-                font-weight: 900 !important;
-                color: black !important;
-            }
+            #root { display: none !important; visibility: hidden !important; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+            @page { margin: 0 !important; padding: 0 !important; }
+            .print-root-layer { display: block !important; visibility: visible !important; position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; background: white !important; }
+            .print-page-unit { display: block !important; position: relative !important; margin: 0 auto !important; overflow: hidden !important; page-break-after: always !important; box-sizing: border-box !important; background-color: white !important; }
+            .print-field { position: absolute !important; display: flex !important; align-items: center !important; line-height: 1.2 !important; pointer-events: none !important; white-space: nowrap !important; }
+            .print-text-content { width: 100% !important; font-family: 'Vazirmatn', sans-serif !important; font-weight: 900 !important; color: black !important; }
         }
-
-        /* Hide print layer during normal browsing */
-        .print-root-layer {
-            display: none;
-        }
+        .print-root-layer { display: none; }
     </style>
 <script type="importmap">
 {
@@ -102,7 +57,9 @@
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js').catch(err => console.log('SW registration failed:', err));
+                navigator.serviceWorker.register('/sw.js', { scope: '/' })
+                .then(reg => console.log('PWA: ServiceWorker active on scope:', reg.scope))
+                .catch(err => console.error('PWA: Registration failed:', err));
             });
         }
     </script>
