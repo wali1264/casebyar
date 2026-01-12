@@ -3,16 +3,22 @@
 <html lang="fa" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Asra GPS - سیستم مدیریت هوشمند ردیاب</title>
     
-    <!-- PWA Primary Tags -->
+    <!-- PWA Optimized Meta Tags -->
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0f172a">
     <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Asra GPS">
     <link rel="apple-touch-icon" href="/icon-192.png">
+    
+    <!-- Microsoft / Windows Meta -->
+    <meta name="msapplication-TileColor" content="#0f172a">
+    <meta name="msapplication-TileImage" content="/icon-192.png">
+    <meta name="application-name" content="Asra GPS">
 
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;400;700;900&display=swap" rel="stylesheet">
@@ -22,10 +28,10 @@
             background-color: #f8fafc;
             margin: 0;
             padding: 0;
-            overscroll-behavior-y: contain; /* Prevents pull-to-refresh on PWA */
+            overscroll-behavior-y: contain;
+            -webkit-tap-highlight-color: transparent;
         }
         
-        /* UI Tweak */
         input::placeholder { color: #cbd5e1; font-weight: normal; }
 
         @media print {
@@ -55,13 +61,36 @@
 <body>
     <div id="root"></div>
     <script>
+        let deferredPrompt;
+
+        // Service Worker Registration
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js', { scope: '/' })
-                .then(reg => console.log('PWA: ServiceWorker active on scope:', reg.scope))
+                .then(reg => {
+                    console.log('PWA: ServiceWorker Registered on scope:', reg.scope);
+                    // Automatic update check
+                    reg.onupdatefound = () => {
+                        const installingWorker = reg.installing;
+                        installingWorker.onstatechange = () => {
+                            if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                console.log('PWA: New content available; please refresh.');
+                            }
+                        };
+                    };
+                })
                 .catch(err => console.error('PWA: Registration failed:', err));
             });
         }
+
+        // Listen for the beforeinstallprompt event
+        window.addEventListener('beforeinstallprompt', (e) => {
+            // Prevent Chrome 67 and earlier from automatically showing the prompt
+            e.preventDefault();
+            // Stash the event so it can be triggered later.
+            deferredPrompt = e;
+            console.log('PWA: Install prompt is ready to be shown.');
+        });
     </script>
 <script type="module" src="/index.tsx"></script>
 </body>

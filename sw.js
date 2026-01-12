@@ -1,17 +1,20 @@
 
-const CACHE_NAME = 'asra-v3';
+const CACHE_NAME = 'asra-static-v4';
+const DYNAMIC_CACHE = 'asra-dynamic-v4';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
-  '/manifest.json'
+  '/manifest.json',
+  'https://cdn.tailwindcss.com',
+  'https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;400;700;900&display=swap'
 ];
 
 // Install Event
 self.addEventListener('install', (event) => {
-  self.skipWaiting(); // Force the waiting service worker to become the active service worker.
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('PWA: Caching essential assets');
+      console.log('PWA: Pre-caching core assets');
       return cache.addAll(ASSETS_TO_CACHE);
     })
   );
@@ -20,38 +23,37 @@ self.addEventListener('install', (event) => {
 // Activate Event
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
+    caches.keys().then((keys) => {
       return Promise.all(
-        cacheNames.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name))
+        keys.filter(key => key !== CACHE_NAME && key !== DYNAMIC_CACHE)
+            .map(key => caches.delete(key))
       );
     })
   );
-  self.clients.claim(); // Become available to all pages immediately.
+  self.clients.claim();
 });
 
 // Fetch Event
 self.addEventListener('fetch', (event) => {
-  // We only cache GET requests
   if (event.request.method !== 'GET') return;
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) return cachedResponse;
-      
+
       return fetch(event.request).then((networkResponse) => {
-        // Only cache valid responses from our own origin or essential fonts/CDNs
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic' && !event.request.url.includes('cdn')) {
+        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
           return networkResponse;
         }
-        
+
         const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
+        caches.open(DYNAMIC_CACHE).then((cache) => {
           cache.put(event.request, responseToCache);
         });
-        
+
         return networkResponse;
       }).catch(() => {
-        // Fallback for offline if needed
+        // Fallback for offline (optional: return a custom offline page)
       });
     })
   );
