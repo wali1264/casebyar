@@ -6,6 +6,49 @@ import { INITIAL_FIELDS } from './constants';
 import ReactDOM from 'react-dom';
 import { supabase } from './lib/supabase';
 
+// --- Local Storage Engine (IndexedDB) ---
+const DB_NAME = 'AsraCache';
+const STORE_NAME = 'images';
+
+const initDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
+        request.result.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+const cacheImage = async (url: string): Promise<string> => {
+  if (!url) return '';
+  try {
+    const db = await initDB();
+    const transaction = db.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const cached = await new Promise<Blob | undefined>((resolve) => {
+      const req = store.get(url);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(undefined);
+    });
+
+    if (cached) return URL.createObjectURL(cached);
+
+    // If not cached, fetch and store
+    const response = await fetch(url);
+    const blob = await response.blob();
+    const writeTx = db.transaction(STORE_NAME, 'readwrite');
+    writeTx.objectStore(STORE_NAME).put(blob, url);
+    return URL.createObjectURL(blob);
+  } catch (e) {
+    console.error('Caching error:', e);
+    return url;
+  }
+};
+
 const AsraLogo = ({ size = 32 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
     <ellipse cx="50" cy="55" rx="45" ry="15" stroke="#0072BC" strokeWidth="4" />
@@ -42,6 +85,23 @@ const Toast = () => {
 
 // --- Print Renderer Component ---
 const PrintLayout = ({ template, formData }: { template: ContractTemplate, formData: Record<string, string> }) => {
+  const [localBgs, setLocalBgs] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    const loadImages = async () => {
+      const bgs: Record<number, string> = {};
+      if (template.pages) {
+        for (const page of template.pages) {
+          if (page.bgImage) {
+            bgs[page.pageNumber] = await cacheImage(page.bgImage);
+          }
+        }
+      }
+      setLocalBgs(bgs);
+    };
+    loadImages();
+  }, [template.pages]);
+
   const masterPaperSize = template.pages?.[0]?.paperSize || PaperSize.A4;
   const isMasterA4 = masterPaperSize === PaperSize.A4;
   
@@ -60,7 +120,7 @@ const PrintLayout = ({ template, formData }: { template: ContractTemplate, formD
             style={{ 
               width: isMasterA4 ? '210mm' : '148mm', 
               height: isMasterA4 ? '297mm' : '210mm',
-              backgroundImage: page.showBackgroundInPrint && page.bgImage ? `url(${page.bgImage})` : 'none',
+              backgroundImage: page.showBackgroundInPrint && localBgs[page.pageNumber] ? `url(${localBgs[page.pageNumber]})` : 'none',
               backgroundSize: '100% 100%',
               backgroundRepeat: 'no-repeat'
             }}
@@ -650,6 +710,7 @@ const BackupManager = () => {
 const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, setActiveSubTab, onPageChange }: { template: ContractTemplate, setTemplate: (t: any) => void, activePageNum: number, activeSubTab: 'design' | 'fields', setActiveSubTab: (s: 'design' | 'fields') => void, onPageChange: (p: number) => void }) => {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [newField, setNewField] = useState({ label: '', fontSize: 14, width: 150, alignment: 'R' as TextAlignment });
+  const [canvasBg, setCanvasBg] = useState<string>('');
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -658,6 +719,19 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
   const activePage = pages.find(p => p.pageNumber === activePageNum) || pages[0] || { pageNumber: activePageNum, fields: [], paperSize: PaperSize.A4, showBackgroundInPrint: true };
   const fields = activePage.fields || [];
   const selectedField = fields.find(f => f.id === selectedFieldId);
+
+  // Load local cached background for canvas
+  useEffect(() => {
+    const loadBg = async () => {
+      if (activePage.bgImage) {
+        const localUrl = await cacheImage(activePage.bgImage);
+        setCanvasBg(localUrl);
+      } else {
+        setCanvasBg('');
+      }
+    };
+    loadBg();
+  }, [activePage.bgImage, activePageNum]);
 
   const updatePage = (updates: Partial<ContractPage>) => setTemplate({ ...template, pages: pages.map(p => p.pageNumber === activePageNum ? { ...p, ...updates } : p) });
   
@@ -673,6 +747,17 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => { 
     const file = e.target.files?.[0]; 
     if (file) { 
+      // 1. Delete old file if exists
+      if (activePage.bgImage) {
+        try {
+          const oldPath = activePage.bgImage.split('/').pop();
+          if (oldPath) {
+            await supabase.storage.from('letterheads').remove([`headers/${oldPath}`]);
+          }
+        } catch (e) { console.error('Cleanup failed:', e); }
+      }
+
+      // 2. Upload new file
       const fileExt = file.name.split('.').pop();
       const fileName = `${Math.random()}.${fileExt}`;
       const filePath = `headers/${fileName}`;
@@ -681,8 +766,18 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
       
       if (!uploadError) {
         const { data: { publicUrl } } = supabase.storage.from('letterheads').getPublicUrl(filePath);
+        
+        // 3. Instant local preview
+        const localUrl = URL.createObjectURL(file);
+        setCanvasBg(localUrl);
+        
+        // 4. Update state and cache in background
         updatePage({ bgImage: publicUrl });
-        showToast('تصویر سربرگ آپلود و در ابر ذخیره شد');
+        const db = await initDB();
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(file, publicUrl);
+        
+        showToast('تصویر سربرگ جدید جایگزین و کش شد');
       }
     } 
   };
@@ -702,7 +797,7 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => fileInputRef.current?.click()} className="bg-blue-600 text-white px-5 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 hover:bg-blue-700 transition-all shadow-md"><Upload size={16} /> آپلود سربرگ</button>
-          <button onClick={() => { updatePage({ bgImage: undefined }); showToast('تصویر حذف شد'); }} className="bg-white border border-red-100 text-red-500 px-5 py-2.5 rounded-2xl text-xs font-bold hover:bg-red-50 transition-all">حذف</button>
+          <button onClick={() => { updatePage({ bgImage: undefined }); setCanvasBg(''); showToast('تصویر حذف شد'); }} className="bg-white border border-red-100 text-red-500 px-5 py-2.5 rounded-2xl text-xs font-bold hover:bg-red-50 transition-all">حذف</button>
           <div className="h-6 w-[1px] bg-slate-200 mx-1" />
           <div className="flex bg-slate-100 p-1 rounded-2xl">
               <button onClick={() => updatePage({ paperSize: PaperSize.A5 })} className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${activePage.paperSize === PaperSize.A5 ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400'}`}>A5</button>
@@ -760,14 +855,14 @@ const DesktopSettings = ({ template, setTemplate, activePageNum, activeSubTab, s
           </div>
         </div>
         <div className="flex-1 bg-slate-200/30 p-8 overflow-auto flex items-start justify-center custom-scrollbar no-print">
-          <div ref={canvasRef} className="bg-white shadow-2xl relative border border-slate-200 transition-all origin-top no-print" style={{ width: activePage.paperSize === PaperSize.A4 ? '595px' : '420px', height: activePage.paperSize === PaperSize.A4 ? '842px' : '595px', backgroundImage: activePage.bgImage ? `url(${activePage.bgImage})` : 'none', backgroundSize: '100% 100%' }}>
+          <div ref={canvasRef} className="bg-white shadow-2xl relative border border-slate-200 transition-all origin-top no-print" style={{ width: activePage.paperSize === PaperSize.A4 ? '595px' : '420px', height: activePage.paperSize === PaperSize.A4 ? '842px' : '595px', backgroundImage: canvasBg ? `url(${canvasBg})` : 'none', backgroundSize: '100% 100%' }}>
             {fields.filter(f => f.isActive).map(f => (
               <div key={f.id} onMouseDown={e => handleDrag(e, f.id)} className={`absolute cursor-move select-none group/field ${selectedFieldId === f.id ? 'z-50' : 'z-10'}`} style={{ left: `${f.x}%`, top: `${f.y}%`, width: `${f.width}px`, transform: `rotate(${f.rotation}deg)`, fontSize: `${f.fontSize}px`, textAlign: f.alignment === 'L' ? 'left' : f.alignment === 'R' ? 'right' : 'center', display: 'flex', alignItems: 'center', justifyContent: f.alignment === 'L' ? 'flex-start' : f.alignment === 'R' ? 'flex-end' : 'center' }}>
                 <div className={`absolute -inset-2 border-2 rounded-lg transition-all ${selectedFieldId === f.id ? 'border-blue-500 bg-blue-500/5 shadow-md' : 'border-transparent'}`} />
                 <span className={`relative font-black tracking-tight w-full leading-tight break-words hyphens-auto ${selectedFieldId === f.id ? 'text-blue-700' : 'text-slate-800 opacity-60'}`} style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}>{f.label}</span>
               </div>
             ))}
-            {!activePage.bgImage && <div className="absolute inset-0 flex flex-col items-center justify-center opacity-5 grayscale pointer-events-none"><Maximize2 size={60} /><span className="font-black text-xl mt-4">Canvas Ready</span></div>}
+            {!canvasBg && <div className="absolute inset-0 flex flex-col items-center justify-center opacity-5 grayscale pointer-events-none"><Maximize2 size={60} /><span className="font-black text-xl mt-4">Canvas Ready</span></div>}
           </div>
         </div>
       </div>
@@ -872,11 +967,17 @@ export default function App() {
     if (sData && sData.length > 0) {
       const dbTemplate = sData[0].value;
       // Merge with default to ensure all pages exist
-      setTemplate({
+      const mergedTemplate = {
         ...DEFAULT_TEMPLATE,
         ...dbTemplate,
         pages: dbTemplate.pages && dbTemplate.pages.length > 0 ? dbTemplate.pages : DEFAULT_TEMPLATE.pages
-      });
+      };
+      setTemplate(mergedTemplate);
+      
+      // Warm up cache for all pages
+      if (mergedTemplate.pages) {
+        mergedTemplate.pages.forEach(p => p.bgImage && cacheImage(p.bgImage));
+      }
     } else {
       // If db is empty, set default and push to db
       setTemplate(DEFAULT_TEMPLATE);
