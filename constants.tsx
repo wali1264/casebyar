@@ -1,14 +1,41 @@
 
-import { PaperSize, ContractField } from './types';
+import React from 'react';
+import { 
+  Users, 
+  CreditCard, 
+  LayoutDashboard, 
+  Scissors
+} from 'lucide-react';
 
-export const PAPER_DIMENSIONS = {
-  [PaperSize.A4]: { width: 210, height: 297 }, // mm
-  [PaperSize.A5]: { width: 148, height: 210 }  // mm
+export const MEASUREMENT_LABELS: Record<string, string> = {
+  height: 'قد',
+  weight: 'وزن',
+  neck: 'دور گردن',
+  shoulder: 'سرشانه',
+  chest: 'دور سینه',
+  waist: 'دور کمر',
+  hip: 'دور باسن',
+  sleeveLength: 'قد آستین',
+  armhole: 'حلقه آستین',
+  wrist: 'دور مچ',
+  backWidth: 'کارور پشت',
+  frontLength: 'بالاتنه جلو',
+  backLength: 'بالاتنه پشت',
+  inseam: 'قد داخل پا',
+  outseam: 'قد شلوار (از کمر)',
+  thigh: 'دور ران',
+  ankle: 'دور دمپا',
 };
 
-export const INITIAL_FIELDS: ContractField[] = [
-  { id: '1', label: 'نام بیمار', key: 'patientName', isActive: true, x: 35, y: 48, width: 150, height: 30, fontSize: 14, rotation: 0, alignment: 'R' },
-  { id: '2', label: 'سن', key: 'age', isActive: true, x: 60, y: 48, width: 50, height: 30, fontSize: 14, rotation: 0, alignment: 'C' },
-  { id: '3', label: 'تاریخ', key: 'date', isActive: true, x: 78, y: 48, width: 100, height: 30, fontSize: 14, rotation: 0, alignment: 'C' },
-  { id: '4', label: 'اقلام دارویی (لیست داروها)', key: 'prescription', isActive: true, x: 55, y: 58, width: 300, height: 100, fontSize: 14, rotation: 0, alignment: 'R' }
+export const NAVIGATION_ITEMS = [
+  { id: 'DASHBOARD', label: 'داشبورد', icon: <LayoutDashboard size={20} /> },
+  { id: 'CUSTOMERS', label: 'مشتریان', icon: <Users size={20} /> },
+  { id: 'ACCOUNTING', label: 'حسابداری', icon: <CreditCard size={20} /> },
 ];
+
+export const STATUS_COLORS: Record<string, string> = {
+  'در انتظار': 'bg-gray-100 text-gray-700',
+  'در حال دوخت': 'bg-blue-100 text-blue-700',
+  'آماده تحویل': 'bg-yellow-100 text-yellow-700',
+  'تحویل داده شده': 'bg-green-100 text-green-700',
+};

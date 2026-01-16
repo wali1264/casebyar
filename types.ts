@@ -1,43 +1,66 @@
 
-export enum PaperSize {
-  A4 = 'A4',
-  A5 = 'A5'
+export enum OrderStatus {
+  PENDING = 'در انتظار',
+  PROCESSING = 'در حال دوخت',
+  READY = 'آماده تحویل',
+  COMPLETED = 'تحویل داده شده'
 }
 
-export type TextAlignment = 'L' | 'C' | 'R';
+export interface Measurements {
+  height?: number;
+  weight?: number;
+  neck?: number;
+  shoulder?: number;
+  chest?: number;
+  waist?: number;
+  hip?: number;
+  sleeveLength?: number;
+  armhole?: number;
+  wrist?: number;
+  backWidth?: number;
+  frontLength?: number;
+  backLength?: number;
+  inseam?: number;
+  outseam?: number;
+  thigh?: number;
+  ankle?: number;
+  [key: string]: number | undefined;
+}
 
-export interface ContractField {
+export interface Transaction {
   id: string;
-  label: string;
-  key: string;
-  isActive: boolean;
-  x: number; // Percent 0-100
-  y: number; // Percent 0-100
-  width: number;
-  height: number;
-  fontSize: number;
-  rotation: number;
-  alignment: TextAlignment;
+  customerId: string;
+  amount: number; // Positive for debt, negative for payment
+  date: string;
+  description: string;
 }
 
-export interface ContractPage {
-  pageNumber: number;
-  bgImage?: string;
-  paperSize: PaperSize;
-  fields: ContractField[];
-  showBackgroundInPrint: boolean;
-}
-
-export interface ContractTemplate {
+export interface Order {
   id: string;
-  pages: ContractPage[];
+  customerId: string;
+  description: string;
+  status: OrderStatus;
+  dateCreated: string;
+  dueDate?: string;
+  totalPrice?: number;
+  deposit?: number;
+  photo?: string; // base64
 }
 
-export interface ClientProfile {
+export interface Customer {
   id: string;
   name: string;
-  fatherName: string;
-  tazkira: string;
   phone: string;
-  createdAt: string;
+  address?: string;
+  notes?: string;
+  measurements: Measurements;
+  balance: number; // Sum of transactions
+  photo?: string; // base64
 }
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+}
+
+export type AppView = 'DASHBOARD' | 'CUSTOMERS' | 'ACCOUNTING' | 'AI_ASSISTANT' | 'CUSTOMER_DETAIL';
