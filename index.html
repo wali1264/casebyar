@@ -4,6 +4,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#4f46e5" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TailorMaster" />
+    
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <link rel="manifest" href="manifest.json" />
+    
     <title>TailorMaster | مدیریت هوشمند خیاطی</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@100;400;700&display=swap" rel="stylesheet">
@@ -50,9 +58,27 @@
         -webkit-backdrop-filter: blur(12px);
         border-top: 1px solid rgba(255, 255, 255, 0.3);
       }
+      /* Neon Input Glow */
+      .neon-input {
+        transition: all 0.3s ease;
+        border: 1px solid rgba(16, 185, 129, 0.2);
+      }
+      .neon-input:focus {
+        border-color: #34d399;
+        box-shadow: 0 0 10px rgba(52, 211, 153, 0.4);
+        background-color: #fff;
+      }
       /* Safe Area for modern phones */
       .pb-safe {
         padding-bottom: env(safe-area-inset-bottom);
+      }
+      /* Hide scrollbar but keep functionality */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
       }
     </style>
   <script type="importmap">
@@ -70,6 +96,7 @@
 </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="index.tsx"></script>
   <script type="module" src="/index.tsx"></script>
 </body>
 </html>

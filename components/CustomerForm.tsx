@@ -38,80 +38,90 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ onSave, onClose, initialDat
       {/* Background Overlay Click to Close */}
       <div className="absolute inset-0" onClick={onClose} />
       
-      <div className="relative bg-white rounded-t-[2.5rem] md:rounded-3xl w-full max-w-4xl max-h-[92vh] md:max-h-[90vh] overflow-hidden flex flex-col mobile-bottom-sheet shadow-2xl">
-        {/* Handle for mobile bottom sheet */}
-        <div className="md:hidden w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-4 mb-2" />
+      <div className="relative bg-white rounded-t-[2.5rem] md:rounded-3xl w-full max-w-2xl max-h-[92vh] md:max-h-[85vh] overflow-hidden flex flex-col mobile-bottom-sheet shadow-2xl">
+        {/* Handle for mobile bottom sheet (Smaller and closer to top) */}
+        <div className="md:hidden w-10 h-1 bg-slate-200 rounded-full mx-auto mt-3 mb-1" />
         
-        <div className="p-6 border-b flex justify-between items-center">
-          <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-            <UserPlus className="text-indigo-600" size={24} />
+        <div className="px-6 py-3 border-b flex justify-between items-center">
+          <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+            <UserPlus className="text-emerald-500" size={18} />
             {initialData ? 'ویرایش اطلاعات' : 'ثبت مشتری جدید'}
           </h2>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors hidden md:block">
-            <X size={20} />
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-full transition-colors">
+            <X size={18} className="text-slate-400" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="block text-sm font-bold text-slate-700">نام و نام خانوادگی</label>
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-5 no-scrollbar">
+          {/* Main Info - Compact Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-slate-400 mr-2 uppercase">نام مشتری</label>
               <input 
                 required
                 type="text" 
                 value={name} 
                 onChange={(e) => setName(e.target.value)}
-                className="w-full px-5 py-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-400"
+                className="neon-input w-full px-4 py-2.5 bg-slate-50 rounded-xl focus:outline-none text-sm font-bold text-slate-700 transition-all"
                 placeholder="مثلاً: علی رضایی"
               />
             </div>
-            <div className="space-y-2">
-              <label className="block text-sm font-bold text-slate-700">شماره تماس</label>
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-slate-400 mr-2 uppercase">شماره تماس</label>
               <input 
                 required
                 type="tel" 
                 value={phone} 
                 onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-5 py-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-left transition-all placeholder:text-slate-400"
+                className="neon-input w-full px-4 py-2.5 bg-slate-50 rounded-xl focus:outline-none text-left text-sm font-bold text-slate-700 transition-all"
                 dir="ltr"
                 placeholder="0912..."
               />
             </div>
           </div>
 
-          <div className="space-y-4">
-            <h3 className="text-lg font-bold text-slate-800 pb-2 border-b border-slate-100">اندازه‌گیری‌ها (سانتی‌متر)</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center gap-2 border-b border-slate-50 pb-1.5">
+              <span className="text-xs font-bold text-slate-800">اندازه‌گیری‌ها</span>
+              <span className="text-[10px] text-slate-400 font-medium">(سانتی‌متر)</span>
+            </div>
+            
+            {/* 3 columns on mobile, 4 on desktop */}
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
               {Object.entries(MEASUREMENT_LABELS).map(([key, label]) => (
-                <div key={key} className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-500 mr-1">{label}</label>
+                <div key={key} className="space-y-0.5">
+                  <label className="block text-[10px] font-bold text-slate-500 mr-1 truncate">{label}</label>
                   <input 
                     type="number" 
                     step="0.1"
                     inputMode="decimal"
                     value={measurements[key] || ''} 
                     onChange={(e) => handleMeasureChange(key, e.target.value)}
-                    className="w-full px-3 py-3 bg-slate-50 border-none rounded-xl focus:ring-1 focus:ring-indigo-400 outline-none text-center font-bold text-slate-700"
+                    className="neon-input w-full px-2 py-2 bg-slate-50 rounded-lg focus:outline-none text-center font-bold text-slate-700 text-sm"
                   />
                 </div>
               ))}
             </div>
           </div>
+          
+          {/* Bottom spacer for floating buttons */}
+          <div className="h-20 md:hidden"></div>
         </form>
 
-        <div className="p-6 border-t bg-white flex justify-end gap-3 pb-safe mb-2 md:mb-0">
+        {/* Floating Glass Footer for Buttons */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 bg-white/60 backdrop-blur-md border-t border-white/20 flex justify-center gap-2 pb-safe">
           <button 
             type="button" 
             onClick={onClose}
-            className="flex-1 md:flex-none px-6 py-4 rounded-2xl text-slate-500 font-bold hover:bg-slate-100 transition-colors"
+            className="px-6 py-2.5 rounded-full text-slate-500 font-bold text-sm hover:bg-white/40 transition-all border border-slate-100"
           >
             انصراف
           </button>
           <button 
             onClick={handleSubmit}
-            className="flex-[2] md:flex-none px-10 py-4 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-2 font-bold"
+            className="px-8 py-2.5 bg-emerald-500 text-white rounded-full hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 font-bold text-sm"
           >
-            <Save size={20} />
+            <Save size={16} />
             ذخیره اطلاعات
           </button>
         </div>
